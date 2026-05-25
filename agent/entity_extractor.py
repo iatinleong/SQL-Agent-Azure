@@ -39,12 +39,18 @@ def _get_concept_routing() -> dict:
 
 
 def _get_branch_mapping() -> dict[str, str]:
-    """從 code_mapping.json 的 BRANCH_MAPPING 取得 {name: code}。"""
+    """從 code_mapping.json 的 BRANCH_MAPPING 取得 {name: code}。
+    JSON 儲存格式為 {code: name}，此處自動反轉為 {name: code} 供查詢用。
+    """
     global _branch_mapping
     if _branch_mapping is None:
         loaded = _load_json("code_mapping.json")
         if isinstance(loaded, dict):
-            _branch_mapping = loaded.get("BRANCH_MAPPING") or {}
+            raw = loaded.get("BRANCH_MAPPING") or {}
+            # raw 是 {code: name}，反轉為 {name: code}；跳過 Excel 標題列
+            _branch_mapping = {
+                v: k for k, v in raw.items() if k != "BRANCH_CODE"
+            }
         else:
             _branch_mapping = {}
     return _branch_mapping
@@ -151,6 +157,7 @@ def extract_entities(query: str) -> ExtractionResult:
     for branch_name, stem in _detect_branches(query, branch_mapping):
         result.detected_branches.append(branch_name)
         seen_stems.add(stem)
+        seen_stems.add(branch_name)  # 避免 Pass 2 重複偵測同一個全名
         code = branch_mapping.get(branch_name) or branch_mapping.get(stem)
         if code:
             result.codes["BRANCH_CODE"] = code

@@ -44,7 +44,7 @@ def plan_report(
     sqls_text = "\n\n---\n\n".join(case_sqls[:5]) if case_sqls else "（無歷史案例）"
 
     entities_block = (
-        f"\n\n【已識別的實體資訊（分公司代碼、商品代碼等，供你參考，無需再問）】\n{entities_text}"
+        f"\n\n【系統已自動識別的實體資訊（以下為確定事實，絕對不可詢問使用者，直接使用）】\n{entities_text}"
         if entities_text.strip() else ""
     )
 
