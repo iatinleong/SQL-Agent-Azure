@@ -14,9 +14,12 @@ _REASONING_MODELS = {"o1", "o1-mini", "o3", "o3-mini", "o4-mini"}
 
 
 def _chat(model: str, messages: list[dict], **kwargs) -> object:
-    """統一呼叫入口：reasoning models 不傳 temperature。"""
+    """統一呼叫入口：不支援自訂 temperature 的 model 自動移除該參數。"""
     base = model.split("-")[0] if "-" in model else model
-    if model in _REASONING_MODELS or base in _REASONING_MODELS:
+    no_temp = (model in _REASONING_MODELS
+               or base in _REASONING_MODELS
+               or model.startswith("gpt-5"))
+    if no_temp:
         kwargs.pop("temperature", None)
     return openai_client.chat.completions.create(model=model, messages=messages, **kwargs)
 
