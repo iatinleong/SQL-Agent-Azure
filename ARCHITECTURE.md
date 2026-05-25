@@ -35,6 +35,22 @@
                        │
                        ▼
 ┌─────────────────────────────────────────────────────┐
+│  Phase 3：報表需求確認（report_planner.py）           │
+│  LLM 閱讀需求 + Top-5 案例 SQL，判斷：               │
+│                                                     │
+│  資訊充足 → status="confirm"                        │
+│    呈現完整理解（粒度、時間範圍、篩選條件等）         │
+│    使用者確認或指出修正 → 更新理解重新 confirm        │
+│                                                     │
+│  有不確定關鍵資訊 → status="ask"                    │
+│    提一個最重要的問題（業務員語言）                   │
+│    收到回答 → 加入 Q&A 歷史重新分析                  │
+│                                                     │
+│  雙方確認完畢 → 報表需求理解注入 Step A prompt       │
+└──────────────────────┬──────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────┐
 │  實體擷取（entity_extractor.py）                     │
 │  product_catalog  → 商品代碼 + 商品專屬表格           │
 │  concept_routing  → 業務概念 → 相關表格               │
@@ -47,6 +63,7 @@
 ┌─────────────────────────────────────────────────────┐
 │  Step A：草稿生成                                    │
 │  注入：                                              │
+│    [報表結構] 報表需求理解（Phase 3 確認結果）        │
 │    [實體] enriched_entities（商品/概念/分公司提示）  │
 │    [規則] business_skills（場景/關鍵字觸發）         │
 │    [指標] metrics.json（全部注入，~800 tokens）      │
@@ -180,9 +197,34 @@ all_cases_embeddings.npz
 
 ---
 
+### Phase 3：報表需求確認（report_planner.py）
+
+在 Phase 2 之後、Step A 之前，透過多輪對話確認報表需求細節。
+
+**輸入：** 需求文字 + Top-5 案例 SQL + 累積的 Q&A 歷史
+
+**互動邏輯：**
+
+| 狀態 | 條件 | 行為 |
+|------|------|------|
+| `ask` | 有真正無法判斷的關鍵資訊 | 提一個最重要的問題（業務員語言）；收到回答後重新分析 |
+| `confirm` | 資訊已足夠 | 呈現完整理解，使用者確認或修正；修正後重新分析 |
+
+**確認內容：** 每列粒度（帳戶/客戶/營業員/分公司/其他）、時間範圍、篩選條件、排列方式等任何影響 SQL 結構的關鍵資訊。
+
+**原則：** 顯而易見的事情不問；每次只問一個問題；盡量 confirm，只有真的不確定才 ask。
+
+**輸出：** `report_plan_text`（注入 Step A 的首個 prompt 區塊）+ Q&A 歷史記錄
+
+**tokens 追蹤：** `plan_in` / `plan_out`（多輪時累加）
+
+**相關檔案：** `agent/report_planner.py`
+
+---
+
 ### 實體擷取（entity_extractor.py）
 
-在 Phase 1/2 之後、Step A 生成之前執行，為後續步驟提供結構化提示。
+在 Phase 3 之後、Step A 生成之前執行，為後續步驟提供結構化提示。
 
 **輸入：** 需求文字
 
@@ -213,6 +255,7 @@ all_cases_embeddings.npz
 | 區塊 | 來源 | 觸發方式 |
 |------|------|---------|
 | 報表需求 | 使用者原始輸入 | 永遠 |
+| 報表需求理解 | `report_planner.py`（Phase 3 確認結果） | 永遠（使用者已確認）|
 | 偵測到的實體 | `entity_extractor.py` | 有偵測到才注入 |
 | 業務技能規則 | `business_skills.json` | 場景名稱 match OR 關鍵字 match |
 | 業務指標計算規則 | `metrics.json` | 永遠（全部，~800 tokens） |
@@ -295,7 +338,7 @@ all_cases_embeddings.npz
 
 ### 費用追蹤
 
-每次完整生成流程（guardrail + classify + step_a + step_b）的 token 用量與 USD 費用均被計算並寫入 Supabase `experiments` 表的 `cost_usd` 欄位。
+每次完整生成流程（guardrail + classify + plan × N輪 + step_a + step_b）的 token 用量與 USD 費用均被計算並寫入 Supabase `experiments` 表的 `cost_usd` 欄位。
 
 **計算方式：**
 ```
@@ -407,6 +450,7 @@ SQLagentnew/
     ├── schema_summarizer.py    # Table 業務說明（LLM）+ raw schema 載入
     ├── entity_extractor.py     # 實體擷取：商品/概念/分公司 → extra_tables + 提示
     ├── generator.py            # Step A + Step B SQL 生成（含費用計算）
+    ├── report_planner.py       # Phase 3 報表需求確認：ask/confirm 多輪對話
     ├── refiner.py              # 追問改寫：意圖分類 + SQL 改寫（含費用計算）
     ├── experiment_logger.py    # 實驗 log（stdout + JSON 存 experiment/）
     ├── supabase_logger.py      # Supabase 寫入（experiments 表）
