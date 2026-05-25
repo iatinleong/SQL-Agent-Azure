@@ -60,12 +60,13 @@ def get_model_pricing(model: str) -> tuple[float, float]:
     return MODEL_PRICING["gpt-5-mini"]
 
 
-# 本機 BGE-M3 快照路徑（避免觸發 SSL 網路請求）
-BGE_MODEL_PATH: str = os.getenv(
+# BGE-M3：本機用快照路徑（避免 SSL 請求），Cloud 自動下載
+_bge_local = os.getenv(
     "BGE_MODEL_PATH",
     r"C:\Users\user\.cache\huggingface\hub"
     r"\models--BAAI--bge-m3\snapshots\5617a9f61b028005a4858fdac845db406aefb181",
 )
+BGE_MODEL_PATH: str = _bge_local if Path(_bge_local).exists() else "BAAI/bge-m3"
 
 # ── OpenAI client（公司 SSL inspection → verify=False）───────────────────────
 openai_client = OpenAI(http_client=httpx.Client(verify=False))
