@@ -13,12 +13,8 @@
       │
       ▼
 ┌─────────────────────────────────────────────────────┐
-│  實體擷取（entity_extractor.py）                     │
-│  product_catalog  → 商品代碼 + 商品專屬表格           │
-│  concept_routing  → 業務概念 → 相關表格               │
-│  branch_mapping   → 分公司名稱 → BRANCH_NAME 提示     │
-│  → extra_tables（追加進候選池）                       │
-│  → enriched_entities 文字（注入 Step A）              │
+│  安全檢查（guardrail.py）                            │
+│  LLM 判斷輸入是否安全，不安全則拒絕並回傳原因        │
 └──────────────────────┬──────────────────────────────┘
                        │
                        ▼
@@ -33,8 +29,18 @@
 ┌─────────────────────────────────────────────────────┐
 │  Phase 2：向量檢索（用原始需求，不用改寫版）          │
 │  用 BGE-M3 對需求文字做 cosine 相似度搜尋            │
-│  → 從 92 筆歷史案例中找出 Top-5 最相似案例           │
-│  → Top-5 案例 union tables ∪ extra_tables = 候選池   │
+│  → 從歷史案例中找出 Top-5 最相似案例                 │
+│  → Top-5 案例 union tables = 候選池基礎              │
+└──────────────────────┬──────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────┐
+│  實體擷取（entity_extractor.py）                     │
+│  product_catalog  → 商品代碼 + 商品專屬表格           │
+│  concept_routing  → 業務概念 → 相關表格               │
+│  code_mapping     → 分公司名稱 → BRANCH_CODE 提示     │
+│  → extra_tables（追加進候選池）                       │
+│  → enriched_entities 文字（注入 Step A）              │
 └──────────────────────┬──────────────────────────────┘
                        │
                        ▼
@@ -45,7 +51,8 @@
 │    [規則] business_skills（場景/關鍵字觸發）         │
 │    [指標] metrics.json（全部注入，~800 tokens）      │
 │    [JOIN]  relationships.json（依候選池過濾）        │
-│    [Schema] 候選池欄位定義（中英文名 + 說明）        │
+│    [Schema] 候選池欄位定義 + 代碼提示                │
+│             （code_mapping.json，≤30 種代碼自動附加）│
 │  LLM 從候選池自由選表、寫 SQL，並給出思路            │
 └──────────────────────┬──────────────────────────────┘
                        │
@@ -54,12 +61,22 @@
 │  Step B：自我批判                                    │
 │  注入：Step A SQL + 思路                             │
 │       Top-5 案例原始 SQL（僅供參考，非標準答案）     │
-│       所有涉及表格欄位定義（含中英文欄位名、定義）   │
+│       所有涉及表格欄位定義（含代碼提示）             │
 │  LLM 自我批判 → 輸出最終 SQL                        │
 └──────────────────────┬──────────────────────────────┘
                        │
                        ▼
               [輸出：最終 Oracle SQL]
+                       │
+              （使用者追問時）
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────┐
+│  追問改寫（refiner.py）                              │
+│  意圖分類：ADD_TABLE / REMOVE_TABLE / MODIFY_SQL     │
+│           / NEW_QUERY（重新走完整流程）              │
+│  改寫 SQL，輸出改法說明 + 最終思路 + 最終 SQL        │
+└─────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -91,29 +108,15 @@ all_cases_embeddings.npz
 
 ---
 
-### 實體擷取（entity_extractor.py）
-
-在 Phase 1 分類之後、Step A 生成之前執行，為後續步驟提供結構化提示。
+### 安全檢查（guardrail.py）
 
 **輸入：** 需求文字
 
-**偵測邏輯：**
+**處理：**
+- LLM 判斷輸入是否為正常業務需求，輸出 `{safe: true/false, reason: "..."}`
+- 不安全（惡意注入、無關要求）時直接拒絕，不進入後續流程
 
-| 來源 | 偵測方式 | 產出 |
-|------|---------|------|
-| `product_catalog.json` | 別名字串比對（台股、基金、複委託…） | PROD_TYPE_CODE / PROD_MTYPE_CODE 提示 + 商品專屬表 |
-| `concept_routing.json` | 關鍵字比對（月均交易量、配息、庫存…） | 業務概念相關表格 |
-| 分公司偵測 | 取後綴前 2 個漢字（`XX分公司/分行`） | BRANCH_NAME='XX分公司' 提示 |
-| `branch_mapping.json` | 若存在，查詢分公司→BRANCH_CODE 對照 | BRANCH_CODE 提示（精確代碼） |
-
-**輸出：**
-- `extra_tables`：追加進候選池（與 Top-5 union tables 聯集）
-- `enriched_entities`：注入 Step A 的【偵測到的商品/業務概念/分公司/WHERE 提示】文字區塊
-- `codes`：dict，如 `{"BRANCH_NAME": "竹北分公司", "PROD_TYPE_CODE": "100"}`
-
-**注意：** Phase 2 向量檢索仍使用**原始需求**（不用擴充版），因為 BGE-M3 對中文語義已足夠，加入代碼反而損害相似度計算。
-
-**相關檔案：** `agent/entity_extractor.py`, `product_catalog.json`, `concept_routing.json`, `branch_mapping.json`（選用）
+**tokens 追蹤：** `guardrail_in` / `guardrail_out`
 
 ---
 
@@ -146,6 +149,8 @@ all_cases_embeddings.npz
   → gap = 0.54 ≥ 0.4，丟棄次要場景
 ```
 
+**tokens 追蹤：** `classify_in` / `classify_out`
+
 **相關檔案：** `classifier.py`, `pool_filter.py`, `models.py`, `taxonomy.json`
 
 ---
@@ -156,9 +161,9 @@ all_cases_embeddings.npz
 
 **處理：**
 1. 用 BGE-M3 將需求文字 embed 成 1024 維向量
-2. 與 92 筆歷史案例的 embedding（預先計算，cached in npz）做 cosine 相似度
+2. 與歷史案例的 embedding（預先計算，cached in npz）做 cosine 相似度
 3. 回傳 Top-5 最相似案例
-4. 取 Top-5 案例 SQL 中出現的表格聯集 ∪ `extra_tables`（實體擷取追加），作為 Step A 的候選池
+4. 取 Top-5 案例 SQL 中出現的表格聯集，作為 Step A 候選池基礎
 
 **為什麼用 LLM 摘要而非直接向量化原始需求？**
 
@@ -175,6 +180,32 @@ all_cases_embeddings.npz
 
 ---
 
+### 實體擷取（entity_extractor.py）
+
+在 Phase 1/2 之後、Step A 生成之前執行，為後續步驟提供結構化提示。
+
+**輸入：** 需求文字
+
+**偵測邏輯：**
+
+| 來源 | 偵測方式 | 產出 |
+|------|---------|------|
+| `product_catalog.json` | 別名字串比對（台股、基金、複委託…） | PROD_TYPE_CODE / PROD_MTYPE_CODE 提示 + 商品專屬表 |
+| `concept_routing.json` | 關鍵字比對（月均交易量、配息、庫存…） | 業務概念相關表格 |
+| 分公司偵測 Pass 1 | 後綴偵測（XX分公司 / XX分行 等），取 4→2 字最長匹配 | BRANCH_CODE 精確代碼 |
+| 分公司偵測 Pass 2 | 直接比對 `code_mapping.json[BRANCH_MAPPING]` 的所有 key（處理無後綴寫法如「竹東」「北高雄」）| BRANCH_CODE 精確代碼 |
+
+**輸出：**
+- `extra_tables`：追加進候選池（與 Top-5 union tables 聯集）
+- `enriched_entities`：注入 Step A 的【偵測到的商品/業務概念/分公司/WHERE 提示】文字區塊
+- `codes`：dict，如 `{"BRANCH_CODE": "9624", "PROD_TYPE_CODE": "100"}`
+
+**注意：** Phase 2 向量檢索仍使用**原始需求**（不用擴充版），因為 BGE-M3 對中文語義已足夠，加入代碼反而損害相似度計算。
+
+**相關檔案：** `agent/entity_extractor.py`, `product_catalog.json`, `concept_routing.json`, `code_mapping.json`
+
+---
+
 ### Step A：草稿生成
 
 **輸入（依注入順序）：**
@@ -186,11 +217,13 @@ all_cases_embeddings.npz
 | 業務技能規則 | `business_skills.json` | 場景名稱 match OR 關鍵字 match |
 | 業務指標計算規則 | `metrics.json` | 永遠（全部，~800 tokens） |
 | 表格關聯關係 | `relationships.json` | 依候選池過濾（兩端表格都在候選池才注入） |
-| 候選池欄位定義 | `schema.csv` | 候選池內所有表格 |
+| 候選池欄位定義 | `schema.csv` + `code_mapping.json` | 候選池內所有表格；≤30 種代碼的欄位自動附加 `[001=男, 002=女]` |
 
 **處理：**
 - LLM 從候選池自由選擇合適的表格，寫出 Oracle SQL
 - 同時輸出設計思路（選表原因、JOIN 條件、時間篩選、聚合邏輯）
+
+**tokens 追蹤：** `step_a_in` / `step_a_out`
 
 **輸出格式：**
 ```
@@ -201,7 +234,7 @@ all_cases_embeddings.npz
 （設計說明）
 ```
 
-**相關檔案：** `generator.py`, `business_skills.json`, `metrics.json`, `relationships.json`
+**相關檔案：** `generator.py`, `business_skills.json`, `metrics.json`, `relationships.json`, `code_mapping.json`
 
 ---
 
@@ -210,18 +243,23 @@ all_cases_embeddings.npz
 **輸入：**
 - Step A 產出的 SQL + 思路
 - Top-5 案例原始 SQL（語義相似，僅供參考，非標準答案）
-- 所有涉及表格的完整欄位定義（候選池 + 案例中出現的表格，含中英文欄位名及定義）
+- 所有涉及表格的完整欄位定義（候選池 + 案例中出現的表格，含代碼提示）
 
 **處理：**
 1. LLM 比較自身思路與參考案例的差異
 2. 分析 JOIN 條件、篩選邏輯是否一致或有可改進之處
 3. 以需求與欄位定義為最終判斷依據（案例僅供參考）
-4. 輸出分析說明 + 最終版 SQL
+4. 輸出分析說明 + 最終思路 + 最終版 SQL
+
+**tokens 追蹤：** `step_b_in` / `step_b_out`
 
 **輸出格式：**
 ```
 --- 分析 ---
 （比較與改進說明）
+
+--- 最終思路 ---
+（完整設計決策說明）
 
 --- 最終 SQL ---
 （最終版完整 Oracle SQL）
@@ -231,14 +269,52 @@ all_cases_embeddings.npz
 
 ---
 
+### 追問改寫（refiner.py）
+
+使用者對已生成的 SQL 提出修改要求時觸發。
+
+**意圖分類（gpt-5-mini）：**
+
+| 意圖 | 說明 |
+|------|------|
+| `ADD_TABLE` | 需要引入目前 SQL 沒有的新表格（加客戶年齡、加配息資料等） |
+| `REMOVE_TABLE` | 移除某個表格、欄位或 JOIN |
+| `MODIFY_SQL` | 只修改 SQL 邏輯（WHERE、聚合、排序、時間範圍等），不新增表格 |
+| `NEW_QUERY` | 完全不同的新需求，重新走完整 Phase1+2+StepA+StepB 流程 |
+
+**處理：**
+- `ADD_TABLE` 時，自動載入 `target_tables` 的欄位定義注入 prompt
+- 保留對話歷史摘要（避免 context 爆炸）
+- 輸出：改法說明 + 最終思路 + 改寫後完整 SQL
+
+**tokens 追蹤：** `classify_in/out`（意圖分類）+ `refine_in/out`（改寫）
+
+**相關檔案：** `agent/refiner.py`
+
+---
+
+### 費用追蹤
+
+每次完整生成流程（guardrail + classify + step_a + step_b）的 token 用量與 USD 費用均被計算並寫入 Supabase `experiments` 表的 `cost_usd` 欄位。
+
+**計算方式：**
+```
+cost = (tokens_in / 1,000,000) × price_in + (tokens_out / 1,000,000) × price_out
+```
+
+費率由 `config.py` 的 `MODEL_PRICING` 維護（每百萬 token，USD）。
+
+---
+
 ## MDL（Metadata Layer）說明
 
-系統維護五個 metadata 檔案，分屬不同抽象層次：
+系統維護六個 metadata 檔案，分屬不同抽象層次：
 
 | 檔案 | 層次 | 用途 | 觸發方式 |
 |------|------|------|---------|
 | `product_catalog.json` | 實體層 | 商品名稱 → 代碼 + 專屬表格 | 別名字串比對 |
 | `concept_routing.json` | 實體層 | 業務概念關鍵字 → 相關表格 | 關鍵字比對 |
+| `code_mapping.json` | 實體層 + Schema 層 | 分公司名稱↔代碼對照（BRANCH_MAPPING/BRANCH_CODE）；欄位代碼說明（SEX_CODE 等） | 實體擷取 + 欄位代碼注入 |
 | `relationships.json` | JOIN 層 | 表格間的 JOIN 條件與注意事項 | 候選池過濾（兩端表格都在才注入）|
 | `metrics.json` | 計算層 | 指標計算公式、欄位語意區分 | 永遠全部注入（避免遺漏關鍵規則）|
 | `business_skills.json` | 模式層 | 複雜 SQL 結構的完整範本（CTE 結構、PIVOT 格式等）| 場景名稱 OR 關鍵字觸發 |
@@ -254,6 +330,20 @@ all_cases_embeddings.npz
 - 「市佔率」→ M_RF_MARKET_SHARE、「配息」→ M_AT_DIV、「營業員」→ M_PT_SALES 等
 - 業務概念關鍵字與資料表的直接對應
 - 用途：補足向量檢索可能遺漏的低頻業務表格
+
+**code_mapping.json**
+
+兩類資料合一：
+
+1. **欄位代碼說明**（扁平結構 `{欄位名: {代碼: 說明}}`）
+   - 來源：`DM_S_VIEW.M_RF_CODE` 參考表（`代碼.xlsx`），共 103 個欄位
+   - 注入規則：≤30 種代碼、說明不全相同、定義文字中尚未出現代碼，才附加
+   - 範例：`SEX_CODE` → `[001=男, 002=女]`
+
+2. **分公司對照**
+   - `BRANCH_CODE`：`{代碼: 分公司名稱}`（59 筆），用於 schema 欄位說明
+   - `BRANCH_MAPPING`：`{分公司名稱: 代碼}`（59 筆），用於 entity_extractor 查詢
+   - 來源：`分公司代碼.xlsx`（從 DB `M_AC_ACCOUNT` 直接撈取）
 
 **relationships.json**
 - 表格間的 JOIN 條件（ON 欄位、JOIN 型態、注意事項）
@@ -280,19 +370,19 @@ all_cases_embeddings.npz
 ```
 SQLagentnew/
 │
-├── all_cases.json              # 92 筆歷史案例（需求 + SQL）
-├── all_cases_embeddings.npz    # 92 筆案例的 BGE-M3 向量 cache
-├── schema.csv                  # 75 張表格定義（73張原始 + 2張自訂客群貼標表欄位）
-├── used_tables.txt             # 30 張被 SQL 實際使用的表名清單
+├── all_cases.json              # 歷史案例（需求 + SQL）
+├── all_cases_embeddings.npz    # 案例的 BGE-M3 向量 cache
+├── schema.csv                  # 73 張表格定義（欄位名、中文名、說明）
+├── used_tables.txt             # 被 SQL 實際使用的表名清單
 │
 ├── product_catalog.json        # MDL：9 個商品的別名、代碼、對應表格
 ├── concept_routing.json        # MDL：32 個業務概念關鍵字 → 相關表格
+├── code_mapping.json           # MDL：欄位代碼說明 + 分公司代碼對照（BRANCH_CODE/BRANCH_MAPPING）
 ├── relationships.json          # MDL：表格 JOIN 條件（兩端表格都在候選池才注入）
 ├── metrics.json                # MDL：12 條指標計算規則（永遠全部注入）
 ├── business_skills.json        # MDL：12 條複雜 SQL 結構規則（場景/關鍵字觸發）
-├── branch_mapping.json         # 選用：分公司名稱 → BRANCH_CODE 對照
 │
-├── case_summaries/             # 92 筆 LLM 業務摘要（Phase 2 索引源）
+├── case_summaries/             # LLM 業務摘要（Phase 2 索引源）
 │   ├── 113.txt
 │   ├── 116.txt
 │   └── ...
@@ -300,22 +390,26 @@ SQLagentnew/
 ├── table_summaries/            # 32 張表格的業務說明（Table Selection 用）
 │   ├── M_AC_ACCOUNT.txt
 │   ├── M_AT_STOCK_TXN.txt
-│   ├── S_ARIELSHAO.CUSTOMER_GROUP_2026Q1.txt
 │   └── ...
 │
 ├── experiment/                 # 每次實驗的 stdout log + JSON 結果
-│   ├── 20250523_120000_eval_retrieval.txt
-│   └── 20250523_120000_eval_table_selection.json
+│   └── YYYYMMDD_HHMMSS_*.{txt,json}
+│
+├── app.py                      # Streamlit 前端（對話介面 + Supabase 寫入）
 │
 └── agent/
     ├── config.py               # 模型、路徑、費率設定（GENERATION_MODEL=o3）
-    ├── classifier.py           # Phase 1 場景分類
+    ├── classifier.py           # Phase 1 場景分類（回傳 result + tokens）
+    ├── guardrail.py            # 輸入安全檢查（回傳 is_safe, reason, tokens）
     ├── pool_filter.py          # 0.4 gap 規則 + 候選池建立
     ├── summarizer.py           # Case 業務摘要（LLM）
     ├── retriever.py            # BGE-M3 向量檢索
     ├── schema_summarizer.py    # Table 業務說明（LLM）+ raw schema 載入
     ├── entity_extractor.py     # 實體擷取：商品/概念/分公司 → extra_tables + 提示
-    ├── generator.py            # Step A + Step B SQL 生成
+    ├── generator.py            # Step A + Step B SQL 生成（含費用計算）
+    ├── refiner.py              # 追問改寫：意圖分類 + SQL 改寫（含費用計算）
+    ├── experiment_logger.py    # 實驗 log（stdout + JSON 存 experiment/）
+    ├── supabase_logger.py      # Supabase 寫入（experiments 表）
     ├── eval_table_selection.py         # Table selection 準確度評測
     ├── eval_retrieval.py               # 向量檢索準確度評測（無 LLM）
     ├── eval_retrieval_table_overlap.py # 檢索案例 table 聯集對 ground truth 的覆蓋率評測
