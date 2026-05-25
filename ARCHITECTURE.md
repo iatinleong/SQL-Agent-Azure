@@ -19,15 +19,7 @@
                        │
                        ▼
 ┌─────────────────────────────────────────────────────┐
-│  Phase 1：場景分類                                   │
-│  LLM (gpt-5-mini) 將需求分類到 7 個業務場景          │
-│  → 主要場景 + 次要場景（0.4 gap 規則）               │
-│  → 主要場景傳給 Step A，觸發 business_skills 規則    │
-└──────────────────────┬──────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────┐
-│  Phase 2：向量檢索（用原始需求，不用改寫版）          │
+│  Phase 1：向量檢索（用原始需求，不用改寫版）          │
 │  用 BGE-M3 對需求文字做 cosine 相似度搜尋            │
 │  → 從歷史案例中找出 Top-5 最相似案例                 │
 │  → Top-5 案例 union tables = 候選池基礎              │
@@ -35,7 +27,7 @@
                        │
                        ▼
 ┌─────────────────────────────────────────────────────┐
-│  Phase 3：報表需求確認（report_planner.py）           │
+│  Phase 2：報表需求確認（report_planner.py）           │
 │  LLM 閱讀需求 + Top-5 案例 SQL，判斷：               │
 │                                                     │
 │  資訊充足 → status="confirm"                        │
@@ -63,7 +55,7 @@
 ┌─────────────────────────────────────────────────────┐
 │  Step A：草稿生成                                    │
 │  注入：                                              │
-│    [報表結構] 報表需求理解（Phase 3 確認結果）        │
+│    [報表結構] 報表需求理解（Phase 2 確認結果）        │
 │    [實體] enriched_entities（商品/概念/分公司提示）  │
 │    [規則] business_skills（場景/關鍵字觸發）         │
 │    [指標] metrics.json（全部注入，~800 tokens）      │
@@ -148,42 +140,7 @@ all_cases_embeddings.npz
 
 ---
 
-### Phase 1：場景分類
-
-**輸入：** 業務員的需求文字
-
-**處理：**
-- LLM 對照 taxonomy.json 中定義的 7 個業務場景，輸出 Pydantic 結構
-- 回傳主要場景、次要場景、各場景置信度分數
-- **0.4 gap 規則**：若主要場景分數 − 次要場景分數 ≥ 0.4，丟棄次要場景（主場景太明顯時不需要混入次要類別）
-- 主要場景回傳給 `generate()`，用於觸發 `business_skills.json` 的場景型規則
-
-**7 個業務場景：**
-1. 精準行銷與專案名單篩選
-2. 交易動能趨勢與異動偵測
-3. 財管商品業績與例行月報
-4. 人員異動與客戶移轉管理
-5. 庫存與損益明細報表
-6. 靜止戶與未實動名單
-7. 市佔率與交易排名分析
-
-**範例：**
-```
-輸入：「查詢南港分公司3月份台股交易量前50大客戶」
-
-輸出：
-  主要場景：交易動能趨勢與異動偵測  (分數 0.72)
-  次要場景：市佔率與交易排名分析    (分數 0.18)
-  → gap = 0.54 ≥ 0.4，丟棄次要場景
-```
-
-**tokens 追蹤：** `classify_in` / `classify_out`
-
-**相關檔案：** `classifier.py`, `pool_filter.py`, `models.py`, `taxonomy.json`
-
----
-
-### Phase 2：向量檢索
+### Phase 1：向量檢索
 
 **輸入：** 需求文字（原始，不加工）
 
@@ -208,7 +165,7 @@ all_cases_embeddings.npz
 
 ---
 
-### Phase 3：報表需求確認（report_planner.py）
+### Phase 2：報表需求確認（report_planner.py）
 
 在 Phase 2 之後、Step A 之前，透過多輪對話確認報表需求細節。
 
@@ -235,7 +192,7 @@ all_cases_embeddings.npz
 
 ### 實體擷取（entity_extractor.py）
 
-在 Phase 3 之後、Step A 生成之前執行，為後續步驟提供結構化提示。
+在 Phase 2 之後、Step A 生成之前執行，為後續步驟提供結構化提示。
 
 **輸入：** 需求文字
 
@@ -266,7 +223,7 @@ all_cases_embeddings.npz
 | 區塊 | 來源 | 觸發方式 |
 |------|------|---------|
 | 報表需求 | 使用者原始輸入 | 永遠 |
-| 報表需求理解 | `report_planner.py`（Phase 3 確認結果） | 永遠（使用者已確認）|
+| 報表需求理解 | `report_planner.py`（Phase 2 確認結果） | 永遠（使用者已確認）|
 | 偵測到的實體 | `entity_extractor.py` | 有偵測到才注入 |
 | 業務技能規則 | `business_skills.json` | 場景名稱 match OR 關鍵字 match |
 | 業務指標計算規則 | `metrics.json` | 永遠（全部，~800 tokens） |
@@ -375,7 +332,7 @@ all_cases_embeddings.npz
 
 ### 費用追蹤
 
-每次完整生成流程（guardrail + classify + plan × N輪 + step_a + step_b + fix × N輪）的 token 用量與 USD 費用均被計算並寫入 Supabase `experiments` 表的 `cost_usd` 欄位。
+每次完整生成流程（guardrail + plan × N輪 + step_a + step_b + fix × N輪）的 token 用量與 USD 費用均被計算並寫入 Supabase `experiments` 表的 `cost_usd` 欄位。
 
 **計算方式：**
 ```
@@ -404,7 +361,7 @@ cost = (tokens_in / 1,000,000) × price_in + (tokens_out / 1,000,000) × price_o
 **product_catalog.json（9 個商品）**
 - 「台股」/「複委託」/「基金」等別名 → PROD_TYPE_CODE / PROD_MTYPE_CODE / TXN_TYPE_CODE
 - 每個商品對應的交易明細表（M_AT_STOCK_TXN、M_AT_FUND_TXN 等）
-- 用途：讓 entity_extractor 在 Phase 2 前追加正確的商品專屬表到候選池
+- 用途：讓 entity_extractor 在 Phase 1 前追加正確的商品專屬表到候選池
 
 **concept_routing.json（32 個概念）**
 - 「市佔率」→ M_RF_MARKET_SHARE、「配息」→ M_AT_DIV、「營業員」→ M_PT_SALES 等
@@ -440,7 +397,7 @@ cost = (tokens_in / 1,000,000) × price_in + (tokens_out / 1,000,000) × price_o
 
 **business_skills.json（12 條規則）**
 - 複雜場景的完整 SQL 結構範本（如例行性報表需要哪些 CTE、離職營業員查詢的三來源聯集等）
-- 場景觸發：trigger_scenes 比對 Phase 1 主要場景
+- 場景觸發：trigger_scenes（已移除，現僅靠 trigger_keywords 觸發）
 - 關鍵字觸發：trigger_keywords 比對需求文字（月均、離職、促轉、開戶等）
 
 ---
@@ -462,7 +419,7 @@ SQLagentnew/
 ├── metrics.json                # MDL：12 條指標計算規則（永遠全部注入）
 ├── business_skills.json        # MDL：12 條複雜 SQL 結構規則（場景/關鍵字觸發）
 │
-├── case_summaries/             # LLM 業務摘要（Phase 2 索引源）
+├── case_summaries/             # LLM 業務摘要（Phase 1 索引源）
 │   ├── 113.txt
 │   ├── 116.txt
 │   └── ...
@@ -479,7 +436,7 @@ SQLagentnew/
 │
 └── agent/
     ├── config.py               # 模型、路徑、費率設定（GENERATION_MODEL=o3）
-    ├── classifier.py           # Phase 1 場景分類（回傳 result + tokens）
+
     ├── guardrail.py            # 輸入安全檢查（回傳 is_safe, reason, tokens）
     ├── pool_filter.py          # 0.4 gap 規則 + 候選池建立
     ├── summarizer.py           # Case 業務摘要（LLM）
@@ -488,7 +445,7 @@ SQLagentnew/
     ├── entity_extractor.py     # 實體擷取：商品/概念/分公司 → extra_tables + 提示
     ├── generator.py            # Step A + Step B + Step C SQL 生成（含費用計算）
     ├── sql_validator.py        # Step C 語法驗證：sqlglot + sqlfluff + LLM 自動修正
-    ├── report_planner.py       # Phase 3 報表需求確認：ask/confirm 多輪對話
+    ├── report_planner.py       # Phase 2 報表需求確認：ask/confirm 多輪對話
     ├── refiner.py              # 追問改寫：意圖分類 + SQL 改寫（含費用計算）
     ├── experiment_logger.py    # 實驗 log（stdout + JSON 存 experiment/）
     ├── supabase_logger.py      # Supabase 寫入（experiments 表）
@@ -504,14 +461,14 @@ SQLagentnew/
 ## CLI 指令速查
 
 ```bash
-# 單筆查詢（Phase 1 + Phase 2）
+# 單筆查詢（Phase 1 向量檢索）
 python -m agent "幫我拉南港分公司台股交易量排名"
 
-# 完整生成（實體擷取 + Phase 1 + Phase 2 + Step A + Step B）
+# 完整生成（實體擷取 + Phase 1 + Phase 2 + Step A + B + C）
 python -m agent --generate "幫我拉南港分公司台股交易量排名"
 python -m agent --generate "需求文字" --model=o3      # 指定模型（預設 o3）
 
-# 批次評測（10 筆固定案例，Phase 1 + Phase 2）
+# 批次評測（10 筆固定案例，Phase 1 向量檢索）
 python -m agent --test
 
 # 全庫向量檢索評測（92 筆，無 LLM 花費）

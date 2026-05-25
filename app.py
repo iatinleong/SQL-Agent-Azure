@@ -84,9 +84,8 @@ class Turn:
     reasoning: str
     intent: str = "NEW_QUERY"
     modification: str = ""
-    phase1_log: str = ""
-    phase2_log: str = ""
-    report_plan_log: str = ""
+    phase1_log: str = ""   # 向量檢索
+    phase2_log: str = ""   # 報表需求確認
     injected_log: str = ""
     step_a_log: str = ""
     step_b_log: str = ""
@@ -149,26 +148,7 @@ def _fmt_injected(summary: dict) -> str:
 
     return "\n".join(lines) if lines else "（無額外注入）"
 
-def _fmt_phase1(classification) -> str:
-    header = [
-        f"**主要場景：** {classification.主要場景}",
-        f"**分類理由：** {classification.分類理由}",
-        "",
-        "各場景置信度：",
-    ]
-    chart = []
-    for item in sorted(classification.各標籤置信度, key=lambda x: x.分數, reverse=True):
-        bar = "█" * round(item.分數 * 16) + "░" * (16 - round(item.分數 * 16))
-        tag = " ← 主" if item.標籤 == classification.主要場景 else (
-              " ← 次" if item.標籤 == classification.次要場景 else "")
-        cjk = sum(1 for c in item.標籤 if "一" <= c <= "鿿")
-        dw  = cjk * 2 + (len(item.標籤) - cjk)
-        pad = " " * max(0, 22 - dw)
-        chart.append(f"{item.標籤}{pad}  {item.分數:.2f}  {bar}{tag}")
-    return "\n".join(header) + "\n```\n" + "\n".join(chart) + "\n```"
-
-
-def _fmt_phase2(hits, all_cases: list) -> str:
+def _fmt_phase1(hits, all_cases: list) -> str:
     case_map = {str(c.get("資料夾")): c for c in all_cases}
     lines = []
     for hit in hits:
@@ -186,9 +166,8 @@ def _fmt_phase2(hits, all_cases: list) -> str:
 # ── Pipeline (progressive inline rendering) ───────────────────────
 
 def _start_new_query(prompt: str, guardrail_tokens: dict | None = None) -> None:
-    """Phase 1 + Phase 2 + 報表結構分析，結果存入 session_state._plan 後 rerun。"""
+    """Phase 1（向量檢索）+ Phase 2（報表確認），結果存入 session_state._plan 後 rerun。"""
     import json as _json
-    from agent.classifier import classify_intent
     from agent.config import ALL_CASES_PATH
     from agent.generator import _get_case_sql_text
     from agent.reader import normalize_requirement
@@ -201,36 +180,26 @@ def _start_new_query(prompt: str, guardrail_tokens: dict | None = None) -> None:
     req_text = normalize_requirement(prompt)
 
     with st.container(border=True):
-        # Phase 1
+        # Phase 1：向量檢索
         _s = st.empty()
-        _s.caption("⏳ Phase 1：場景分類中…")
-        classification, classify_tokens = classify_intent(prompt)
-        primary_scene = classification.主要場景
-        phase1_log = _fmt_phase1(classification)
-        _s.empty()
-        with st.expander("Phase 1：場景分類", expanded=False):
-            st.markdown(phase1_log)
-
-        # Phase 2
-        _s = st.empty()
-        _s.caption("⏳ Phase 2：向量檢索中…")
+        _s.caption("⏳ Phase 1：向量檢索中…")
         hits = retrieve(req_text, all_cases, top_k=5)
         if not hits:
             _s.warning("找不到案例摘要，請先執行 `python -m agent --summarize`")
             return
-        phase2_log = "**Top-5 檢索結果**\n\n" + _fmt_phase2(hits, all_cases)
+        phase1_log = "**Top-5 檢索結果**\n\n" + _fmt_phase1(hits, all_cases)
         _s.empty()
-        with st.expander("Phase 2：向量檢索", expanded=False):
-            st.markdown(phase2_log)
+        with st.expander("Phase 1：向量檢索", expanded=False):
+            st.markdown(phase1_log)
 
-        # 實體擷取（Phase 3 需要這些資訊，才不會問已知的代碼）
+        # 實體擷取
         from agent.entity_extractor import extract_entities
         extraction = extract_entities(req_text)
         entities_text = extraction.enriched_entities
 
-        # Phase 3：報表結構分析
+        # Phase 2：報表需求確認
         _s = st.empty()
-        _s.caption("⏳ Phase 3：分析報表結構中…")
+        _s.caption("⏳ Phase 2：分析報表結構中…")
         case_sqls = [_get_case_sql_text(h.case_id, all_cases) for h in hits]
         plan = plan_report(req_text, case_sqls, entities_text=entities_text)
         _s.empty()
@@ -240,10 +209,8 @@ def _start_new_query(prompt: str, guardrail_tokens: dict | None = None) -> None:
         "req":              req_text,
         "hits":             hits,
         "all_cases":        all_cases,
-        "scene":            primary_scene,
+        "scene":            "",
         "phase1_log":       phase1_log,
-        "phase2_log":       phase2_log,
-        "classify_tokens":  classify_tokens,
         "guardrail_tokens": guardrail_tokens or {},
         "case_sqls":        case_sqls,
         "entities_text":    entities_text,
@@ -264,7 +231,7 @@ def _confirm_and_generate(pending: dict) -> None:
     report_plan_text = fmt_plan_for_prompt(plan)
     report_plan_log  = fmt_plan_for_user(plan)
 
-    with st.expander("Phase 3：報表呈現確認", expanded=True):
+    with st.expander("Phase 2：報表需求確認", expanded=True):
         st.markdown(report_plan_log)
 
     _s = st.empty()
@@ -322,14 +289,9 @@ def _confirm_and_generate(pending: dict) -> None:
 
     # ── 費用計算 ──────────────────────────────────────────────────
     clf_price_in, clf_price_out = get_model_pricing(CLASSIFICATION_MODEL)
-    classify_tokens  = pending["classify_tokens"]
     guardrail_tokens = pending["guardrail_tokens"]
     all_plan_tokens  = pending.get("all_plan_tokens", {})
 
-    classify_cost = (
-        classify_tokens.get("classify_in", 0) / 1_000_000 * clf_price_in
-        + classify_tokens.get("classify_out", 0) / 1_000_000 * clf_price_out
-    )
     guardrail_cost = (
         guardrail_tokens.get("guardrail_in", 0) / 1_000_000 * clf_price_in
         + guardrail_tokens.get("guardrail_out", 0) / 1_000_000 * clf_price_out
@@ -338,7 +300,7 @@ def _confirm_and_generate(pending: dict) -> None:
         all_plan_tokens.get("plan_in", 0) / 1_000_000 * clf_price_in
         + all_plan_tokens.get("plan_out", 0) / 1_000_000 * clf_price_out
     )
-    total_cost = guardrail_cost + classify_cost + plan_cost + gen.cost_usd
+    total_cost = guardrail_cost + plan_cost + gen.cost_usd
 
     from agent.supabase_logger import insert
     ok, err = insert("experiments", {
@@ -350,7 +312,7 @@ def _confirm_and_generate(pending: dict) -> None:
             "candidate_tables": gen.candidate_tables,
             "all_tables": gen.all_tables,
             "final_sql": gen.final_sql,
-            "tokens": {**guardrail_tokens, **classify_tokens, **all_plan_tokens, **gen.tokens},
+            "tokens": {**guardrail_tokens, **all_plan_tokens, **gen.tokens},
             "cost_usd": total_cost,
         },
         "log": "",
@@ -364,8 +326,7 @@ def _confirm_and_generate(pending: dict) -> None:
         reasoning=gen.final_reasoning,
         intent="NEW_QUERY",
         phase1_log=pending["phase1_log"],
-        phase2_log=pending["phase2_log"],
-        report_plan_log=report_plan_log,
+        phase2_log=report_plan_log,
         injected_log=_fmt_injected(gen.injected_summary),
         step_a_log=step_a_log,
         step_b_log=step_b_log,
@@ -673,9 +634,8 @@ def _render_turn(turn: Turn, idx: int):
 
         # Phase / Step logs
         log_sections = [
-            ("Phase 1：場景分類", turn.phase1_log),
-            ("Phase 2：向量檢索", turn.phase2_log),
-            ("Phase 3：報表呈現確認", turn.report_plan_log),
+            ("Phase 1：向量檢索", turn.phase1_log),
+            ("Phase 2：報表需求確認", turn.phase2_log),
             ("Prompt 注入內容", turn.injected_log),
             ("Step A：草稿生成", turn.step_a_log),
             ("Step B：自我批判", turn.step_b_log),
@@ -750,10 +710,8 @@ def main():
         )
 
         with st.container(border=True):
-            with st.expander("Phase 1：場景分類", expanded=False):
+            with st.expander("Phase 1：向量檢索", expanded=False):
                 st.markdown(pending["phase1_log"])
-            with st.expander("Phase 2：向量檢索", expanded=False):
-                st.markdown(pending["phase2_log"])
 
             # 顯示已完成的問答記錄
             for qa in pending.get("qa_history", []):
