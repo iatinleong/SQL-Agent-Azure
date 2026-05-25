@@ -124,6 +124,28 @@ def _load_business_skills_text(query: str, scene: str = "") -> str:
 
 # ── Relationships 載入 ─────────────────────────────────────────────
 
+def _get_relationship_pairs(table_set: set[str] | None = None) -> list[tuple[str, str]]:
+    """直接從 JSON 取 (table_a, table_b) 對，用於 injected_summary。避免解析格式化文字。"""
+    if not RELATIONSHIPS_PATH.exists():
+        return []
+    with open(RELATIONSHIPS_PATH, encoding="utf-8") as f:
+        rels = json.load(f)
+    upper_set = {t.upper() for t in table_set} if table_set else None
+    seen: set[tuple[str, str]] = set()
+    pairs: list[tuple[str, str]] = []
+    for r in rels:
+        if r.get("inferred"):
+            continue
+        ta, tb = r["table_a"].upper(), r["table_b"].upper()
+        if upper_set is not None and not (ta in upper_set and tb in upper_set):
+            continue
+        key = (ta, tb)
+        if key not in seen:
+            seen.add(key)
+            pairs.append((r["table_a"], r["table_b"]))
+    return pairs
+
+
 def _load_relationships_text(table_set: set[str] | None = None) -> str:
     """載入 relationships.json，只保留 table_a 與 table_b 都在 table_set 內的關聯。
     table_set 為 None 時不過濾（全部載入）。
@@ -475,7 +497,7 @@ def generate(
     import re as _re
     skill_names = _re.findall(r"▸ \[([^\]]+)\]", skills_text)
     metric_names = _re.findall(r"▸ (.+?)：", metrics_text)
-    rel_pairs = _re.findall(r"  (\w+)\s+\w+\s+(\w+)", rels_text)
+    rel_pairs = _get_relationship_pairs(table_set=candidate_set)
 
     injected_summary = {
         "today": today,
@@ -488,7 +510,7 @@ def generate(
         },
         "skills":        skill_names,
         "metrics":       metric_names,
-        "relationships": [(a, b) for a, b in rel_pairs],
+        "relationships": rel_pairs,
     }
 
     price_in, price_out = get_model_pricing(model)
