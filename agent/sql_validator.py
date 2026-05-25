@@ -5,6 +5,22 @@ from __future__ import annotations
 from .config import CLASSIFICATION_MODEL
 
 
+# ── 前處理：清理 LLM 輸出的雜訊 ───────────────────────────────────
+
+def _clean(sql: str) -> str:
+    """移除 LLM 輸出中可能夾帶的 markdown fence 與多餘空白。"""
+    s = sql.strip()
+    # 移除開頭的 ```sql 或 ```
+    for fence in ("```sql", "```"):
+        if s.startswith(fence):
+            s = s[len(fence):]
+            break
+    # 移除結尾的 ```
+    if s.endswith("```"):
+        s = s[:-3]
+    return s.strip()
+
+
 # ── 驗證層 ─────────────────────────────────────────────────────────
 
 def _run_sqlglot(sql: str) -> list[str]:
@@ -41,8 +57,9 @@ def _run_sqlfluff(sql: str) -> list[str]:
 
 def validate_sql(sql: str) -> list[str]:
     """執行雙重驗證，回傳所有問題（空 list = 通過）。
-    先跑 sqlglot；若有 parse 錯誤就不跑 sqlfluff（沒意義）。
+    先清理 LLM 輸出格式，再跑 sqlglot；若有 parse 錯誤就不跑 sqlfluff（沒意義）。
     """
+    sql = _clean(sql)
     glot_errors = _run_sqlglot(sql)
     if glot_errors:
         return glot_errors
@@ -103,6 +120,7 @@ def validate_and_fix(
       log           — [{"round": 1, "errors": [...], "passed": bool}, ...]
       total_tokens  — 所有 LLM fix 呼叫的 token 加總
     """
+    sql = _clean(sql)
     total_tokens: dict[str, int] = {}
     log: list[dict] = []
 
