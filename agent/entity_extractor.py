@@ -166,15 +166,29 @@ def extract_entities(query: str) -> ExtractionResult:
             result.codes.setdefault("BRANCH_NAME", branch_name)
             branch_lines.append(f"  分公司：{branch_name} → BRANCH_NAME='{branch_name}'（可直接用文字比對）")
 
-    # Pass 2：直接比對 mapping key（處理無後綴寫法，如「竹東」「北高雄」）
+    # Pass 2：比對全名或去後綴的 stem（處理「竹東」「北高雄」等無後綴寫法）
     for key, code in branch_mapping.items():
         if key in seen_stems:
             continue  # 已由 Pass 1 處理
+        # 先試全名
         if key in query:
             result.detected_branches.append(key)
             seen_stems.add(key)
             result.codes["BRANCH_CODE"] = code
             branch_lines.append(f"  分公司：{key} → BRANCH_CODE='{code}'")
+            continue
+        # 再試去掉後綴的 stem（如「竹東分公司」→「竹東」）
+        stem = key
+        for suffix in _BRANCH_SUFFIXES:
+            if key.endswith(suffix):
+                stem = key[: -len(suffix)]
+                break
+        if stem != key and stem not in seen_stems and stem in query:
+            result.detected_branches.append(key)
+            seen_stems.add(stem)
+            seen_stems.add(key)
+            result.codes["BRANCH_CODE"] = code
+            branch_lines.append(f"  分公司：{key}（由「{stem}」觸發）→ BRANCH_CODE='{code}'")
 
     # ── 4. 組合 enriched_entities ───────────────────────────────
     sections: list[str] = []
