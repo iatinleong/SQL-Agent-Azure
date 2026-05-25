@@ -25,7 +25,7 @@ st.markdown("""
 <style>
 .block-container { padding-top: 1.8rem; padding-bottom: 4rem;
                    padding-left: 3rem; padding-right: 3rem; }
-#MainMenu, footer, header { visibility: hidden; }
+footer, header { visibility: hidden; }
 
 /* Title */
 .sa-title { font-size: 2rem; font-weight: 800; letter-spacing: -0.5px;
@@ -431,6 +431,7 @@ def main():
     is_first = not st.session_state.conversation
     prompt = st.chat_input(
         "描述你的報表需求..." if is_first else "繼續追問，或修改 SQL...",
+        max_chars=100,
     )
 
     if prompt:
@@ -441,17 +442,28 @@ def main():
             f'</div>',
             unsafe_allow_html=True,
         )
-        try:
-            turn = _run_and_render_full(prompt) if is_first else _run_and_render_refiner(prompt)
-        except Exception as e:
-            import traceback
-            st.error(f"錯誤：{e}\n\n```\n{traceback.format_exc()}\n```")
-            turn = None
 
-        if turn:
-            st.session_state.conversation.append(turn)
-        elif is_first:
-            st.warning("找不到案例摘要，請先執行 `python -m agent --summarize`")
+        # ── Guardrail ─────────────────────────────────────────────
+        _gs = st.empty()
+        _gs.caption("🛡️ 安全審查中…")
+        from agent.guardrail import check_input
+        is_safe, reason = check_input(prompt)
+        _gs.empty()
+
+        if not is_safe:
+            st.error(f"⛔ 輸入不符合規範，請重新描述報表需求。\n\n原因：{reason}")
+        else:
+            try:
+                turn = _run_and_render_full(prompt) if is_first else _run_and_render_refiner(prompt)
+            except Exception as e:
+                import traceback
+                st.error(f"錯誤：{e}\n\n```\n{traceback.format_exc()}\n```")
+                turn = None
+
+            if turn:
+                st.session_state.conversation.append(turn)
+            elif is_first:
+                st.warning("找不到案例摘要，請先執行 `python -m agent --summarize`")
 
     # ── Feedback button (bottom) ──────────────────────────────────
     if st.session_state.conversation:
