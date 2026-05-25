@@ -365,12 +365,11 @@ def _feedback_dialog():
         if st.button("👍  有幫助", use_container_width=True,
                      type="primary" if rating == "up" else "secondary"):
             st.session_state[rating_key] = "up"
-            st.rerun()
+            # 不呼叫 st.rerun()，讓按鈕點擊自然觸發 dialog 內重繪
     with c2:
         if st.button("👎  需改進", use_container_width=True,
                      type="primary" if rating == "down" else "secondary"):
             st.session_state[rating_key] = "down"
-            st.rerun()
 
     st.write("")
     text = st.text_area(
@@ -380,13 +379,21 @@ def _feedback_dialog():
         key="_global_fb_text",
     )
 
+    # 重新讀取（按鈕點擊後 session_state 已更新）
+    rating = st.session_state.get(rating_key)
+
     st.write("")
     if rating:
-        st.warning("送出後頁面將重新整理。", icon="⚠️")
+        st.info(f"已選擇：{'👍 有幫助' if rating == 'up' else '👎 需改進'}　送出後將開始新對話。")
         if st.button("確定送出", type="primary", use_container_width=True):
             _save_feedback(rating, text)
+            # 清除 feedback 狀態
             st.session_state.pop(rating_key, None)
             st.session_state.pop("_global_fb_text", None)
+            # 重置對話，開始新一輪
+            for k in ("conversation", "hits", "all_cases"):
+                st.session_state[k] = [] if k == "conversation" else None
+            st.session_state.primary_scene = ""
             st.rerun()
     else:
         st.caption("請先選擇 👍 或 👎")
