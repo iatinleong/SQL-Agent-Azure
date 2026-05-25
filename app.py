@@ -738,12 +738,22 @@ def main():
                     st.markdown("---")
 
                     with st.form("plan_confirm_form", clear_on_submit=True):
-                        correction = st.text_input(
-                            "如有需要調整，請說明（直接送出表示沒問題）",
-                            placeholder="例如：希望每一列是分公司層級，而不是帳戶",
+                        col_input, col_send = st.columns([6, 1])
+                        with col_input:
+                            correction = st.text_input(
+                                "如有需要調整，請說明",
+                                placeholder="例如：希望每一列是分公司層級，而不是帳戶",
+                                label_visibility="collapsed",
+                            )
+                        with col_send:
+                            corrected = st.form_submit_button("送出", use_container_width=True)
+                        confirmed = st.form_submit_button(
+                            "邏輯確認過沒有問題，立刻開始生成 SQL",
+                            type="primary",
+                            use_container_width=True,
                         )
-                        submitted = st.form_submit_button("確認，開始生成 SQL", type="primary")
 
+                    submitted = confirmed or corrected
                     if submitted:
                         if correction.strip():
                             # 使用者指出需修正 → 加入記錄重新分析
