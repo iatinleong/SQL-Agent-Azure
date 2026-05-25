@@ -27,14 +27,17 @@ def get_client():
         return None
 
 
-def insert(table: str, data: dict) -> bool:
-    """寫入一筆記錄。回傳是否成功。"""
+def insert(table: str, data: dict) -> tuple[bool, str]:
+    """寫入一筆記錄。回傳 (成功, 錯誤訊息)。"""
     client = get_client()
     if client is None:
-        return False
+        msg = f"找不到 SUPABASE_URL / SUPABASE_KEY（URL={os.getenv('SUPABASE_URL','(空')}）"
+        print(f"  [Supabase] {msg}")
+        return False, msg
     try:
         client.table(table).insert(data).execute()
-        return True
+        return True, ""
     except Exception as e:
-        print(f"  [Supabase] 寫入 {table} 失敗：{e}")
-        return False
+        msg = str(e)
+        print(f"  [Supabase] 寫入 {table} 失敗：{msg}")
+        return False, msg

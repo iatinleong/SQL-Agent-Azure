@@ -217,7 +217,7 @@ def _run_and_render_full(requirement: str) -> Turn | None:
 
     # ── 寫 Supabase experiment log ────────────────────────────────
     from agent.supabase_logger import insert
-    insert("experiments", {
+    ok, err = insert("experiments", {
         "name": "generate",
         "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
         "results": {
@@ -230,6 +230,8 @@ def _run_and_render_full(requirement: str) -> Turn | None:
         },
         "log": "",
     })
+    if not ok:
+        st.warning(f"⚠️ Supabase log 寫入失敗：{err}")
 
     return Turn(
         user_query=requirement,
@@ -297,7 +299,7 @@ def _run_and_render_refiner(new_query: str) -> Turn | None:
 
     # ── 寫 Supabase experiment log ────────────────────────────────
     from agent.supabase_logger import insert
-    insert("experiments", {
+    ok, err = insert("experiments", {
         "name": "refine",
         "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
         "results": {
@@ -309,6 +311,8 @@ def _run_and_render_refiner(new_query: str) -> Turn | None:
         },
         "log": "",
     })
+    if not ok:
+        st.warning(f"⚠️ Supabase log 寫入失敗：{err}")
 
     return Turn(
         user_query=new_query,
@@ -338,9 +342,10 @@ def _save_feedback(rating: str, text: str):
         "turns": turns_snapshot,
     }
 
-    ok = insert("feedback", payload)
+    ok, err = insert("feedback", payload)
 
     if not ok:
+        st.warning(f"⚠️ Supabase feedback 寫入失敗：{err}")
         # Fallback：寫入本機 JSON
         out = BASE_DIR / "experiment" / f"{ts}_feedback.json"
         out.parent.mkdir(exist_ok=True)
