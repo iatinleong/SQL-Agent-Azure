@@ -215,6 +215,22 @@ def _run_and_render_full(requirement: str) -> Turn | None:
     st.session_state.all_cases     = all_cases
     st.session_state.primary_scene = primary_scene
 
+    # ── 寫 Supabase experiment log ────────────────────────────────
+    from agent.supabase_logger import insert
+    insert("experiments", {
+        "name": "generate",
+        "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
+        "results": {
+            "query": requirement,
+            "scene": primary_scene,
+            "candidate_tables": gen.candidate_tables,
+            "all_tables": gen.all_tables,
+            "final_sql": gen.final_sql,
+            "tokens": gen.tokens,
+        },
+        "log": "",
+    })
+
     return Turn(
         user_query=requirement,
         sql=gen.final_sql,
@@ -278,6 +294,21 @@ def _run_and_render_refiner(new_query: str) -> Turn | None:
         if result.new_reasoning:
             with st.expander("SQL 思路", expanded=False):
                 st.markdown(result.new_reasoning)
+
+    # ── 寫 Supabase experiment log ────────────────────────────────
+    from agent.supabase_logger import insert
+    insert("experiments", {
+        "name": "refine",
+        "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
+        "results": {
+            "query": new_query,
+            "intent": result.intent,
+            "target_tables": result.target_tables,
+            "final_sql": result.new_sql,
+            "tokens": {**result.classify_tokens, **result.refine_tokens},
+        },
+        "log": "",
+    })
 
     return Turn(
         user_query=new_query,
