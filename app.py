@@ -185,7 +185,6 @@ def _run_and_render_full(requirement: str, guardrail_tokens: dict | None = None)
     import json as _json
     from agent.classifier import classify_intent
     from agent.config import ALL_CASES_PATH, CLASSIFICATION_MODEL, GENERATION_MODEL, get_model_pricing
-    from agent.entity_extractor import extract_entities
     from agent.generator import generate
     from agent.reader import normalize_requirement
     from agent.retriever import retrieve
@@ -214,12 +213,7 @@ def _run_and_render_full(requirement: str, guardrail_tokens: dict | None = None)
             _s.warning("找不到案例摘要，請先執行 `python -m agent --summarize`")
             return None
 
-        extraction    = extract_entities(req_text)
-        entity_sec    = (
-            f"**偵測到的實體**\n\n{extraction.enriched_entities}\n\n---\n\n"
-            if extraction.enriched_entities else ""
-        )
-        phase2_log = entity_sec + "**Top-5 檢索結果**\n\n" + _fmt_phase2(hits, all_cases)
+        phase2_log = "**Top-5 檢索結果**\n\n" + _fmt_phase2(hits, all_cases)
         _s.empty()
         with st.expander("Phase 2：向量檢索", expanded=False):
             st.markdown(phase2_log)
@@ -240,7 +234,7 @@ def _run_and_render_full(requirement: str, guardrail_tokens: dict | None = None)
             + (f"**Step B 分析：**\n\n{gen.final_analysis}" if gen.final_analysis else "")
         )
         _s.empty()
-        with st.expander("⚙️ Prompt 注入內容", expanded=False):
+        with st.expander("Prompt 注入內容", expanded=False):
             st.markdown(_fmt_injected(gen.injected_summary))
         with st.expander("Step A：草稿生成", expanded=False):
             st.markdown(step_a_log)
@@ -522,7 +516,7 @@ def _render_turn(turn: Turn, idx: int):
         log_sections = [
             ("Phase 1：場景分類", turn.phase1_log),
             ("Phase 2：向量檢索", turn.phase2_log),
-            ("⚙️ Prompt 注入內容", turn.injected_log),
+            ("Prompt 注入內容", turn.injected_log),
             ("Step A：草稿生成", turn.step_a_log),
             ("Step B：自我批判", turn.step_b_log),
         ]

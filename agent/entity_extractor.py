@@ -142,9 +142,12 @@ def extract_entities(query: str) -> ExtractionResult:
         concept_lines.append(f"  概念「{keyword}」→ {desc}；可用表格：{', '.join(tables)}")
 
     # ── 3. 分公司偵測 ────────────────────────────────────────────
+    # Pass 1：後綴偵測（XX分公司 / XX分行 等）
     branch_lines: list[str] = []
+    seen_stems: set[str] = set()
     for branch_name, stem in _detect_branches(query, branch_mapping):
         result.detected_branches.append(branch_name)
+        seen_stems.add(stem)
         code = branch_mapping.get(branch_name) or branch_mapping.get(stem)
         if code:
             result.codes["BRANCH_CODE"] = code
@@ -152,6 +155,16 @@ def extract_entities(query: str) -> ExtractionResult:
         else:
             result.codes.setdefault("BRANCH_NAME", branch_name)
             branch_lines.append(f"  分公司：{branch_name} → BRANCH_NAME='{branch_name}'（可直接用文字比對）")
+
+    # Pass 2：直接比對 mapping key（處理無後綴寫法，如「竹東」「北高雄」）
+    for key, code in branch_mapping.items():
+        if key in seen_stems:
+            continue  # 已由 Pass 1 處理
+        if key in query:
+            result.detected_branches.append(key)
+            seen_stems.add(key)
+            result.codes["BRANCH_CODE"] = code
+            branch_lines.append(f"  分公司：{key} → BRANCH_CODE='{code}'")
 
     # ── 4. 組合 enriched_entities ───────────────────────────────
     sections: list[str] = []
