@@ -544,7 +544,7 @@ def generate(
     print(f"\n{SEP}")
     print("=== Step C：語法驗證（sqlglot + sqlfluff）===")
     final_sql, step_c_log, fix_tokens = validate_and_fix(
-        final_sql, model=CLASSIFICATION_MODEL, max_iter=3
+        final_sql, model=CLASSIFICATION_MODEL, max_iter=1
     )
     for entry in step_c_log:
         if entry["passed"]:
