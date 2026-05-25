@@ -1,0 +1,7 @@
+streamlit
+openai
+httpx
+python-dotenv
+pydantic
+numpy
+sentence-transformers
