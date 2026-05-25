@@ -286,14 +286,38 @@ def _run_and_render_refiner(new_query: str) -> Turn | None:
 # ── Save feedback ─────────────────────────────────────────────────
 
 def _save_feedback(rating: str, text: str):
-    from agent.config import BASE_DIR
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out = BASE_DIR / "experiment" / f"{ts}_feedback.json"
-    out.parent.mkdir(exist_ok=True)
     turns_snapshot = [
         {"query": t.user_query, "sql": t.sql, "intent": t.intent}
         for t in st.session_state.conversation
     ]
+
+    # 嘗試寫入 Supabase（Cloud 環境）
+    supabase_url = st.secrets.get("SUPABASE_URL", "") if hasattr(st, "secrets") else ""
+    supabase_key = st.secrets.get("SUPABASE_KEY", "") if hasattr(st, "secrets") else ""
+    if not supabase_url:
+        import os
+        supabase_url = os.getenv("SUPABASE_URL", "")
+        supabase_key = os.getenv("SUPABASE_KEY", "")
+
+    if supabase_url and supabase_key:
+        try:
+            from supabase import create_client
+            client = create_client(supabase_url, supabase_key)
+            client.table("feedback").insert({
+                "timestamp": ts,
+                "rating": rating,
+                "feedback_text": text,
+                "turns": turns_snapshot,
+            }).execute()
+            return
+        except Exception as e:
+            st.warning(f"Supabase 寫入失敗，改存本機：{e}")
+
+    # Fallback：寫入本機 JSON
+    from agent.config import BASE_DIR
+    out = BASE_DIR / "experiment" / f"{ts}_feedback.json"
+    out.parent.mkdir(exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
         json.dump({
             "timestamp": ts,
