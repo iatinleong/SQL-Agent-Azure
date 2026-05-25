@@ -43,6 +43,7 @@ class GenerationResult:
     final_analysis: str      # Step B：與參考案例的比對差異（items 1-3）
     final_reasoning: str     # Step B：最終 SQL 設計決策與原因（item 4，獨立欄位）
     final_sql: str
+    injected_summary: dict = field(default_factory=dict)
     tokens: dict[str, int] = field(default_factory=dict)
 
 
@@ -469,6 +470,26 @@ def generate(
     print(final_sql)
     print(WIDE_SEP)
 
+    # ── 整理注入內容摘要 ──────────────────────────────────────────
+    import re as _re
+    skill_names = _re.findall(r"▸ \[([^\]]+)\]", skills_text)
+    metric_names = _re.findall(r"▸ (.+?)：", metrics_text)
+    rel_pairs = _re.findall(r"  (\w+)\s+\w+\s+(\w+)", rels_text)
+
+    injected_summary = {
+        "today": today,
+        "entities": {
+            "products":  extraction.detected_products,
+            "concepts":  extraction.detected_concepts,
+            "branches":  extraction.detected_branches,
+            "extra_tables": [t for t in extraction.extra_tables if t in available],
+            "codes":     extraction.codes,
+        },
+        "skills":        skill_names,
+        "metrics":       metric_names,
+        "relationships": [(a, b) for a, b in rel_pairs],
+    }
+
     return GenerationResult(
         candidate_tables=candidate_tables,
         all_tables=all_tables,
@@ -478,4 +499,5 @@ def generate(
         final_reasoning=final_reasoning,
         final_sql=final_sql,
         tokens={"step_a_in": a_in, "step_a_out": a_out, "step_b_in": b_in, "step_b_out": b_out},
+        injected_summary=injected_summary,
     )

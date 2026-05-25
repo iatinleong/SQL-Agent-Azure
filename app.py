@@ -86,6 +86,7 @@ class Turn:
     modification: str = ""
     phase1_log: str = ""
     phase2_log: str = ""
+    injected_log: str = ""
     step_a_log: str = ""
     step_b_log: str = ""
 
@@ -104,6 +105,44 @@ def _init():
 
 
 # ── Log helpers ───────────────────────────────────────────────────
+
+def _fmt_injected(summary: dict) -> str:
+    lines = []
+
+    if summary.get("today"):
+        lines.append(f"**今日日期（已注入 prompt）：** {summary['today']}")
+
+    ent = summary.get("entities", {})
+    if any([ent.get("products"), ent.get("concepts"), ent.get("branches")]):
+        lines.append("\n**偵測到的實體：**")
+        if ent.get("products"):
+            lines.append(f"- 商品：{', '.join(ent['products'])}")
+        if ent.get("concepts"):
+            lines.append(f"- 業務概念：{', '.join(ent['concepts'])}")
+        if ent.get("branches"):
+            lines.append(f"- 分公司：{', '.join(ent['branches'])}")
+        if ent.get("extra_tables"):
+            lines.append(f"- 追加候選表格：{', '.join(ent['extra_tables'])}")
+        if ent.get("codes"):
+            for k, v in ent["codes"].items():
+                lines.append(f"- WHERE 提示 `{k}` = `{v}`")
+
+    if summary.get("skills"):
+        lines.append(f"\n**觸發的 Business Skills（{len(summary['skills'])} 條）：**")
+        for s in summary["skills"]:
+            lines.append(f"- {s}")
+
+    if summary.get("metrics"):
+        lines.append(f"\n**注入的業務指標（{len(summary['metrics'])} 條）：**")
+        for m in summary["metrics"]:
+            lines.append(f"- {m}")
+
+    if summary.get("relationships"):
+        lines.append(f"\n**注入的 JOIN 關聯（{len(summary['relationships'])} 組）：**")
+        for a, b in summary["relationships"]:
+            lines.append(f"- {a} ↔ {b}")
+
+    return "\n".join(lines) if lines else "（無額外注入）"
 
 def _fmt_phase1(classification) -> str:
     header = [
@@ -200,6 +239,8 @@ def _run_and_render_full(requirement: str) -> Turn | None:
             + (f"**Step B 分析：**\n\n{gen.final_analysis}" if gen.final_analysis else "")
         )
         _s.empty()
+        with st.expander("⚙️ Prompt 注入內容", expanded=False):
+            st.markdown(_fmt_injected(gen.injected_summary))
         with st.expander("Step A：草稿生成", expanded=False):
             st.markdown(step_a_log)
         with st.expander("Step B：自我批判", expanded=False):
@@ -240,6 +281,7 @@ def _run_and_render_full(requirement: str) -> Turn | None:
         intent="NEW_QUERY",
         phase1_log=phase1_log,
         phase2_log=phase2_log,
+        injected_log=_fmt_injected(gen.injected_summary),
         step_a_log=step_a_log,
         step_b_log=step_b_log,
     )
@@ -440,6 +482,7 @@ def _render_turn(turn: Turn, idx: int):
         log_sections = [
             ("Phase 1：場景分類", turn.phase1_log),
             ("Phase 2：向量檢索", turn.phase2_log),
+            ("⚙️ Prompt 注入內容", turn.injected_log),
             ("Step A：草稿生成", turn.step_a_log),
             ("Step B：自我批判", turn.step_b_log),
         ]
