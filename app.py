@@ -86,6 +86,7 @@ class Turn:
     modification: str = ""
     phase1_log: str = ""
     phase2_log: str = ""
+    report_plan_log: str = ""
     injected_log: str = ""
     step_a_log: str = ""
     step_b_log: str = ""
@@ -100,6 +101,7 @@ def _init():
         "hits": None,
         "all_cases": None,
         "primary_scene": "",
+        "_plan": None,
     }.items():
         if k not in st.session_state:
             st.session_state[k] = v
@@ -181,26 +183,28 @@ def _fmt_phase2(hits, all_cases: list) -> str:
 
 # ── Pipeline (progressive inline rendering) ───────────────────────
 
-def _run_and_render_full(requirement: str, guardrail_tokens: dict | None = None) -> Turn | None:
+def _start_new_query(prompt: str, guardrail_tokens: dict | None = None) -> None:
+    """Phase 1 + Phase 2 + 報表結構分析，結果存入 session_state._plan 後 rerun。"""
     import json as _json
     from agent.classifier import classify_intent
-    from agent.config import ALL_CASES_PATH, CLASSIFICATION_MODEL, GENERATION_MODEL, get_model_pricing
-    from agent.generator import generate
+    from agent.config import ALL_CASES_PATH
+    from agent.generator import _get_case_sql_text
     from agent.reader import normalize_requirement
+    from agent.report_planner import plan_report
     from agent.retriever import retrieve
 
     with open(ALL_CASES_PATH, encoding="utf-8") as f:
         all_cases = _json.load(f)
 
-    req_text = normalize_requirement(requirement)
+    req_text = normalize_requirement(prompt)
 
     with st.container(border=True):
         # Phase 1
         _s = st.empty()
         _s.caption("⏳ Phase 1：場景分類中…")
-        classification, classify_tokens = classify_intent(requirement)
-        primary_scene  = classification.主要場景
-        phase1_log     = _fmt_phase1(classification)
+        classification, classify_tokens = classify_intent(prompt)
+        primary_scene = classification.主要場景
+        phase1_log = _fmt_phase1(classification)
         _s.empty()
         with st.expander("Phase 1：場景分類", expanded=False):
             st.markdown(phase1_log)
@@ -211,17 +215,99 @@ def _run_and_render_full(requirement: str, guardrail_tokens: dict | None = None)
         hits = retrieve(req_text, all_cases, top_k=5)
         if not hits:
             _s.warning("找不到案例摘要，請先執行 `python -m agent --summarize`")
-            return None
-
+            return
         phase2_log = "**Top-5 檢索結果**\n\n" + _fmt_phase2(hits, all_cases)
         _s.empty()
         with st.expander("Phase 2：向量檢索", expanded=False):
             st.markdown(phase2_log)
 
-        # Step A + B
+        # Phase 3：報表結構分析
+        _s = st.empty()
+        _s.caption("⏳ Phase 3：分析報表結構中…")
+        case_sqls = [_get_case_sql_text(h.case_id, all_cases) for h in hits]
+        plan = plan_report(req_text, case_sqls)
+        _s.empty()
+
+    st.session_state._plan = {
+        "prompt":          prompt,
+        "req":             req_text,
+        "hits":            hits,
+        "all_cases":       all_cases,
+        "scene":           primary_scene,
+        "phase1_log":      phase1_log,
+        "phase2_log":      phase2_log,
+        "classify_tokens": classify_tokens,
+        "guardrail_tokens": guardrail_tokens or {},
+        "case_sqls":       case_sqls,
+        "plan":            plan,
+        "corrections":     [],
+    }
+    st.rerun()
+
+
+def _render_plan_ui(pending: dict) -> None:
+    """顯示報表結構建議，讓使用者確認或修正，確認後執行 SQL 生成。"""
+    from agent.report_planner import fmt_plan_for_prompt, fmt_plan_for_user, plan_report
+    from agent.config import CLASSIFICATION_MODEL, GENERATION_MODEL, get_model_pricing
+    from agent.generator import generate
+
+    plan = pending["plan"]
+
+    with st.container(border=True):
+        with st.expander("Phase 1：場景分類", expanded=False):
+            st.markdown(pending["phase1_log"])
+        with st.expander("Phase 2：向量檢索", expanded=False):
+            st.markdown(pending["phase2_log"])
+
+        st.markdown("---")
+        st.markdown("**根據你的需求與相似案例，系統推測報表應呈現如下，請確認是否正確：**")
+        st.markdown(fmt_plan_for_user(plan))
+        st.markdown("---")
+
+        with st.form("plan_confirm_form", clear_on_submit=True):
+            correction = st.text_input(
+                "如有需要調整，請說明（直接送出表示沒問題）",
+                placeholder="例如：希望每一列是分公司層級，而不是帳戶",
+            )
+            submitted = st.form_submit_button("確認，開始生成 SQL", type="primary")
+
+        if not submitted:
+            return
+
+        if correction.strip():
+            # 使用者要求修正，重新分析
+            _s = st.empty()
+            _s.caption("⏳ 重新分析報表結構…")
+            new_corrections = pending.get("corrections", []) + [correction]
+            new_plan = plan_report(
+                pending["req"],
+                pending["case_sqls"],
+                correction="\n".join(new_corrections),
+            )
+            _s.empty()
+            pending["plan"] = new_plan
+            pending["corrections"] = new_corrections
+            st.session_state._plan = pending
+            st.rerun()
+            return
+
+        # ── 使用者確認，執行 SQL 生成 ─────────────────────────────
+        report_plan_text = fmt_plan_for_prompt(plan)
+        report_plan_log  = fmt_plan_for_user(plan)
+
+        with st.expander("Phase 3：報表呈現確認", expanded=True):
+            st.markdown(report_plan_log)
+
         _s = st.empty()
         _s.caption("⏳ Step A + B：SQL 生成中…（需要一些時間）")
-        gen = generate(req_text, hits, all_cases, model=GENERATION_MODEL, scene=primary_scene)
+        gen = generate(
+            pending["req"],
+            pending["hits"],
+            pending["all_cases"],
+            model=GENERATION_MODEL,
+            scene=pending["scene"],
+            report_plan_text=report_plan_text,
+        )
 
         step_a_log = (
             f"**候選表格（{len(gen.candidate_tables)} 張）：**  \n"
@@ -249,36 +335,38 @@ def _run_and_render_full(requirement: str, guardrail_tokens: dict | None = None)
 
     # ── 費用計算 ──────────────────────────────────────────────────
     clf_price_in, clf_price_out = get_model_pricing(CLASSIFICATION_MODEL)
+    classify_tokens  = pending["classify_tokens"]
+    guardrail_tokens = pending["guardrail_tokens"]
+    plan_tokens      = plan.tokens
+
     classify_cost = (
         classify_tokens.get("classify_in", 0) / 1_000_000 * clf_price_in
         + classify_tokens.get("classify_out", 0) / 1_000_000 * clf_price_out
     )
-    guardrail_cost = 0.0
-    if guardrail_tokens:
-        g_price_in, g_price_out = get_model_pricing(CLASSIFICATION_MODEL)
-        guardrail_cost = (
-            guardrail_tokens.get("guardrail_in", 0) / 1_000_000 * g_price_in
-            + guardrail_tokens.get("guardrail_out", 0) / 1_000_000 * g_price_out
-        )
-    total_cost = guardrail_cost + classify_cost + gen.cost_usd
-
-    st.session_state.hits          = hits
-    st.session_state.all_cases     = all_cases
-    st.session_state.primary_scene = primary_scene
+    guardrail_cost = (
+        guardrail_tokens.get("guardrail_in", 0) / 1_000_000 * clf_price_in
+        + guardrail_tokens.get("guardrail_out", 0) / 1_000_000 * clf_price_out
+    )
+    plan_cost = (
+        plan_tokens.get("plan_in", 0) / 1_000_000 * clf_price_in
+        + plan_tokens.get("plan_out", 0) / 1_000_000 * clf_price_out
+    )
+    total_cost = guardrail_cost + classify_cost + plan_cost + gen.cost_usd
 
     # ── 寫 Supabase experiment log ────────────────────────────────
     from agent.supabase_logger import insert
     all_tokens = {
-        **(guardrail_tokens or {}),
+        **guardrail_tokens,
         **classify_tokens,
+        **plan_tokens,
         **gen.tokens,
     }
     ok, err = insert("experiments", {
         "name": "generate",
         "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
         "results": {
-            "query": requirement,
-            "scene": primary_scene,
+            "query": pending["prompt"],
+            "scene": pending["scene"],
             "candidate_tables": gen.candidate_tables,
             "all_tables": gen.all_tables,
             "final_sql": gen.final_sql,
@@ -290,18 +378,25 @@ def _run_and_render_full(requirement: str, guardrail_tokens: dict | None = None)
     if not ok:
         st.warning(f"⚠️ Supabase log 寫入失敗：{err}")
 
-    return Turn(
-        user_query=requirement,
+    turn = Turn(
+        user_query=pending["prompt"],
         sql=gen.final_sql,
         reasoning=gen.final_reasoning,
         intent="NEW_QUERY",
-        phase1_log=phase1_log,
-        phase2_log=phase2_log,
+        phase1_log=pending["phase1_log"],
+        phase2_log=pending["phase2_log"],
+        report_plan_log=report_plan_log,
         injected_log=_fmt_injected(gen.injected_summary),
         step_a_log=step_a_log,
         step_b_log=step_b_log,
         cost_usd=total_cost,
     )
+    st.session_state.conversation.append(turn)
+    st.session_state.hits          = pending["hits"]
+    st.session_state.all_cases     = pending["all_cases"]
+    st.session_state.primary_scene = pending["scene"]
+    st.session_state._plan         = None
+    st.rerun()
 
 
 def _run_and_render_refiner(new_query: str, guardrail_tokens: dict | None = None) -> Turn | None:
@@ -470,6 +565,7 @@ def _feedback_dialog():
             for k in ("conversation", "hits", "all_cases"):
                 st.session_state[k] = [] if k == "conversation" else None
             st.session_state.primary_scene = ""
+            st.session_state._plan = None
             st.rerun()
     else:
         st.caption("請先選擇 👍 或 👎")
@@ -516,6 +612,7 @@ def _render_turn(turn: Turn, idx: int):
         log_sections = [
             ("Phase 1：場景分類", turn.phase1_log),
             ("Phase 2：向量檢索", turn.phase2_log),
+            ("Phase 3：報表呈現確認", turn.report_plan_log),
             ("Prompt 注入內容", turn.injected_log),
             ("Step A：草稿生成", turn.step_a_log),
             ("Step B：自我批判", turn.step_b_log),
@@ -548,15 +645,33 @@ def main():
         st.markdown('<p class="sa-sub">以自然語言描述報表需求，自動生成 Oracle SQL</p>',
                     unsafe_allow_html=True)
     with h2:
-        if st.session_state.conversation:
+        if st.session_state.conversation or st.session_state._plan:
             st.write("")
             if st.button("新對話", use_container_width=True):
                 for k in ("conversation", "hits", "all_cases"):
                     st.session_state[k] = [] if k == "conversation" else None
                 st.session_state.primary_scene = ""
+                st.session_state._plan = None
                 st.rerun()
 
     st.markdown('<hr class="sa-div">', unsafe_allow_html=True)
+
+    # ── 報表結構確認中（等待使用者確認）────────────────────────────
+    if st.session_state._plan is not None:
+        pending = st.session_state._plan
+        st.markdown(
+            f'<div class="sa-user">'
+            f'<div class="sa-user-avatar">你</div>'
+            f'<div class="sa-user-text">{pending["prompt"]}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        try:
+            _render_plan_ui(pending)
+        except Exception as e:
+            import traceback
+            st.error(f"錯誤：{e}\n\n```\n{traceback.format_exc()}\n```")
+        return  # 不顯示對話歷史或 chat input
 
     # ── Conversation ──────────────────────────────────────────────
     for i, turn in enumerate(st.session_state.conversation):
@@ -591,20 +706,15 @@ def main():
             st.error(f"⛔ 輸入不符合規範，請重新描述報表需求。\n\n原因：{reason}")
         else:
             try:
-                turn = (
-                    _run_and_render_full(prompt, guardrail_tokens=guardrail_tokens)
-                    if is_first
-                    else _run_and_render_refiner(prompt, guardrail_tokens=guardrail_tokens)
-                )
+                if is_first:
+                    _start_new_query(prompt, guardrail_tokens=guardrail_tokens)
+                else:
+                    turn = _run_and_render_refiner(prompt, guardrail_tokens=guardrail_tokens)
+                    if turn:
+                        st.session_state.conversation.append(turn)
             except Exception as e:
                 import traceback
                 st.error(f"錯誤：{e}\n\n```\n{traceback.format_exc()}\n```")
-                turn = None
-
-            if turn:
-                st.session_state.conversation.append(turn)
-            elif is_first:
-                st.warning("找不到案例摘要，請先執行 `python -m agent --summarize`")
 
     # ── Feedback button (bottom) ──────────────────────────────────
     if st.session_state.conversation:

@@ -291,9 +291,12 @@ def _step_a(
     entities_text: str = "",
     skills_text: str = "",
     today: str = "",
+    report_plan_text: str = "",
 ) -> tuple[str, str, int, int]:
     """Step A：LLM 從候選池自由生成 SQL + 思路。回傳 (sql, reasoning, in_tok, out_tok)。"""
     optional_blocks = []
+    if report_plan_text:
+        optional_blocks.append(report_plan_text)
     if entities_text:
         optional_blocks.append(entities_text)
     if skills_text:
@@ -451,6 +454,7 @@ def generate(
     all_cases: list[dict],
     model: str = GENERATION_MODEL,
     scene: str = "",
+    report_plan_text: str = "",
 ) -> GenerationResult:
     """完整生成流程：Step A（草稿）→ Step B（自我批判 + 最終 SQL）。"""
     from .schema_summarizer import load_table_summaries
@@ -508,6 +512,7 @@ def generate(
         entities_text=extraction.enriched_entities,
         skills_text=skills_text,
         today=today,
+        report_plan_text=report_plan_text,
     )
     print(f"  tokens：in={a_in}  out={a_out}")
     print(f"\n{step_a_sql[:400]}{'...' if len(step_a_sql) > 400 else ''}")
