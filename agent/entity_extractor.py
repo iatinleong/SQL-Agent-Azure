@@ -39,11 +39,14 @@ def _get_concept_routing() -> dict:
 
 
 def _get_branch_mapping() -> dict[str, str]:
-    """branch_mapping.json: {"竹北分公司": "XYZB", ...}。非必要；不存在時仍輸出 BRANCH_NAME 提示。"""
+    """從 code_mapping.json 的 BRANCH_MAPPING 取得 {name: code}。"""
     global _branch_mapping
     if _branch_mapping is None:
-        loaded = _load_json("branch_mapping.json")
-        _branch_mapping = loaded if isinstance(loaded, dict) else {}
+        loaded = _load_json("code_mapping.json")
+        if isinstance(loaded, dict):
+            _branch_mapping = loaded.get("BRANCH_MAPPING") or {}
+        else:
+            _branch_mapping = {}
     return _branch_mapping
 
 
