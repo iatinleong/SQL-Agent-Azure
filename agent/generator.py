@@ -537,12 +537,12 @@ def generate(
     )
     print(f"  tokens：in={b_in}  out={b_out}")
 
-    # ── Step C：語法驗證 + 自動修正 ──────────────────────────────
-    from .sql_validator import validate_and_fix
+    # ── Step C：語法驗證 + 語意審查 ──────────────────────────────
+    from .sql_validator import validate_and_fix, semantic_review
     from .config import CLASSIFICATION_MODEL
 
     print(f"\n{SEP}")
-    print("=== Step C：語法驗證（sqlglot + sqlfluff）===")
+    print("=== Step C-1：語法驗證（sqlglot + sqlfluff）===")
     final_sql, step_c_log, fix_tokens = validate_and_fix(
         final_sql, model=CLASSIFICATION_MODEL, max_iter=1
     )
@@ -553,6 +553,26 @@ def generate(
             print(f"  Round {entry['round']}：❌ {len(entry['errors'])} 個問題")
             for e in entry["errors"]:
                 print(f"    {e}")
+
+    print(f"\n--- Step C-2：語意審查（幻覺 / Oracle 語法 / 效能）---")
+    full_requirement = f"{requirement}\n\n{report_plan_text}" if report_plan_text else requirement
+    final_sql, review_note, review_changed, semantic_tokens = semantic_review(
+        final_sql,
+        schema_text=step_b_schema,
+        requirement=full_requirement,
+        model=CLASSIFICATION_MODEL,
+    )
+    step_c_log.append({
+        "stage": "semantic",
+        "changed": review_changed,
+        "note": review_note,
+    })
+    for k, v in semantic_tokens.items():
+        fix_tokens[k] = fix_tokens.get(k, 0) + v
+    if review_changed:
+        print(f"  ⚠️ 發現問題，已改寫\n  {review_note[:200]}")
+    else:
+        print("  ✅ 語意審查通過（PASS）")
 
     print(f"\n{WIDE_SEP}")
     print("=== 最終 SQL ===")

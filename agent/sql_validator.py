@@ -105,6 +105,78 @@ def _fix_with_llm(sql: str, errors: list[str], model: str) -> tuple[str, dict]:
     return fixed, tokens
 
 
+# ── 語意審查 ───────────────────────────────────────────────────────
+
+def semantic_review(
+    sql: str,
+    schema_text: str,
+    requirement: str,
+    model: str,
+) -> tuple[str, str, bool, dict]:
+    """
+    語意層審查：幻覺（表/欄位存在性）、Oracle 語法、效能。
+    回傳 (final_sql, note, changed, tokens)。
+    若 SQL 已無問題，LLM 回覆 PASS，changed=False，SQL 不變。
+    """
+    from .generator import _chat
+
+    prompt = (
+        "【需求說明】\n"
+        f"{requirement}\n\n"
+        "【Schema（可用表格與欄位）】\n"
+        f"{schema_text}\n\n"
+        "【待審查 SQL】\n"
+        f"{sql}\n\n"
+        "請從以下三個面向審查這份 SQL：\n"
+        "1. 幻覺檢查：SQL 中所有表格名稱、欄位名稱是否確實存在於上方 Schema？\n"
+        "2. Oracle 語法：是否有非 Oracle 語法（LIMIT、ILIKE、:: 型別轉換等）？\n"
+        "3. 效能優化：在不改變報表目的與輸出結果的前提下，是否有可優化（運算資源、運算速度）的寫法？\n"
+        "   例如：WHERE 條件對索引欄位套函數可改成範圍條件、多次掃描同表應改用 CTE、\n"
+        "   排名/累計需求應用視窗函數取代關聯子查詢、可提早過濾以縮小 JOIN 前的資料量等。\n\n"
+        "如果 SQL 已正確且沒有需要改進的地方，只回覆：\n"
+        "PASS\n\n"
+        "如果有需要修正的問題，回覆：\n"
+        "--- 問題 ---\n"
+        "（說明發現的問題，效能優化需說明為何不影響報表結果）\n\n"
+        "--- 修正後 SQL ---\n"
+        "（完整修正後的 Oracle SQL，不含 markdown fence）"
+    )
+
+    resp = _chat(
+        model,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "你是 Oracle SQL 審查專家。"
+                    "只在發現真正的問題時才改寫 SQL；若 SQL 已正確，直接回覆 PASS。"
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0,
+    )
+    raw = (resp.choices[0].message.content or "").strip()
+    tokens = {
+        "semantic_in": resp.usage.prompt_tokens,
+        "semantic_out": resp.usage.completion_tokens,
+    }
+
+    if raw.upper().startswith("PASS"):
+        return sql, "PASS", False, tokens
+
+    note = ""
+    new_sql = sql
+    if "--- 問題 ---" in raw and "--- 修正後 SQL ---" in raw:
+        after_issue = raw.split("--- 問題 ---", 1)[1]
+        note = after_issue.split("--- 修正後 SQL ---", 1)[0].strip()
+        new_sql = _clean(after_issue.split("--- 修正後 SQL ---", 1)[1].strip())
+    else:
+        note = raw
+
+    return new_sql, note, True, tokens
+
+
 # ── 主入口 ─────────────────────────────────────────────────────────
 
 def validate_and_fix(
