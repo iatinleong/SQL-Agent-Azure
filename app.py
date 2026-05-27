@@ -109,6 +109,7 @@ def _init():
         "_feedback_pending": False,   # SQL 生成後等待回饋
         "_auto_fb_triggered": False,  # 閒置 timer 已自動觸發過一次
         "current_user": None,         # {"employee_id": ..., "display_name": ...}
+        "_session_token": None,       # cookie 對應的 session token
     }.items():
         if k not in st.session_state:
             st.session_state[k] = v
@@ -124,7 +125,7 @@ def _reset_conversation():
     st.session_state._auto_fb_triggered = False
 
 
-def _login_gate() -> bool:
+def _login_gate(cookie_manager) -> bool:
     """顯示登入 / 註冊表單。已登入回傳 True，否則渲染表單後回傳 False。"""
     if st.session_state.get("current_user"):
         return True
@@ -147,10 +148,17 @@ def _login_gate() -> bool:
             if not emp_id or not password:
                 st.error("請填寫員工編號與密碼")
             else:
-                from agent.auth import login_user
+                from agent.auth import login_user, create_session
                 ok, result = login_user(emp_id.strip(), password)
                 if ok:
+                    token = create_session(result["employee_id"], result["display_name"])
+                    from datetime import datetime, timedelta
+                    cookie_manager.set(
+                        "sql_agent_token", token,
+                        expires_at=datetime.now() + timedelta(days=30),
+                    )
                     st.session_state.current_user = result
+                    st.session_state._session_token = token
                     st.rerun()
                 else:
                     st.error(result)
@@ -841,7 +849,21 @@ def _render_available_tables() -> None:
 def main():
     _init()
 
-    if not _login_gate():
+    # Cookie manager（必須在所有 widget 之前初始化）
+    import extra_streamlit_components as stx
+    cookie_manager = stx.CookieManager(key="sql_agent_cookies")
+
+    # 自動從 cookie 還原登入狀態
+    if not st.session_state.get("current_user"):
+        token = cookie_manager.get("sql_agent_token")
+        if token:
+            from agent.auth import verify_session
+            user_from_cookie = verify_session(token)
+            if user_from_cookie:
+                st.session_state.current_user = user_from_cookie
+                st.session_state._session_token = token
+
+    if not _login_gate(cookie_manager):
         return
 
     user = st.session_state.current_user or {}
@@ -868,7 +890,11 @@ def main():
     with h3:
         st.write("")
         if st.button("登出", use_container_width=True):
+            from agent.auth import delete_session
+            delete_session(st.session_state.get("_session_token", ""))
+            cookie_manager.delete("sql_agent_token")
             st.session_state.current_user = None
+            st.session_state._session_token = None
             _reset_conversation()
             st.rerun()
 

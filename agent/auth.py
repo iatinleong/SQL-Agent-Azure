@@ -1,5 +1,10 @@
-"""使用者認證：員工編號 + 密碼，bcrypt hash 存 Supabase users 表。"""
+"""使用者認證：員工編號 + 密碼，bcrypt hash 存 Supabase users 表。
+Session token 存 Supabase sessions 表，cookie 保持跨 refresh 登入狀態。
+"""
 from __future__ import annotations
+
+import uuid
+from datetime import datetime, timedelta, timezone
 
 from .supabase_logger import get_client
 
@@ -62,3 +67,57 @@ def login_user(
         "employee_id": user["employee_id"],
         "display_name": user.get("display_name") or employee_id,
     }
+
+
+# ── Session token（跨 refresh 保持登入）──────────────────────────
+
+_SESSION_DAYS = 30
+
+
+def create_session(employee_id: str, display_name: str) -> str:
+    """產生 session token，寫入 Supabase sessions 表，回傳 token。"""
+    token = str(uuid.uuid4())
+    expires = datetime.now(timezone.utc) + timedelta(days=_SESSION_DAYS)
+    client = get_client()
+    if client:
+        client.table("sessions").insert({
+            "token": token,
+            "employee_id": employee_id,
+            "display_name": display_name,
+            "expires_at": expires.isoformat(),
+        }).execute()
+    return token
+
+
+def verify_session(token: str) -> dict | None:
+    """驗證 token 是否有效，回傳 user dict 或 None。"""
+    if not token:
+        return None
+    client = get_client()
+    if client is None:
+        return None
+    result = (
+        client.table("sessions")
+        .select("employee_id, display_name, expires_at")
+        .eq("token", token)
+        .execute()
+    )
+    if not result.data:
+        return None
+    row = result.data[0]
+    expires = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
+    if datetime.now(timezone.utc) > expires:
+        return None
+    return {
+        "employee_id": row["employee_id"],
+        "display_name": row.get("display_name") or row["employee_id"],
+    }
+
+
+def delete_session(token: str) -> None:
+    """刪除 session token（登出用）。"""
+    if not token:
+        return
+    client = get_client()
+    if client:
+        client.table("sessions").delete().eq("token", token).execute()

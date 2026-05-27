@@ -9,3 +9,4 @@ supabase
 sqlglot
 sqlfluff
 bcrypt
+extra-streamlit-components
