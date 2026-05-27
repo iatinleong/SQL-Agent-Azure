@@ -735,49 +735,25 @@ def _render_turn(turn: Turn, idx: int):
 # ── Available tables ──────────────────────────────────────────────
 
 @st.cache_data(show_spinner=False)
-def _load_available_table_info() -> list[tuple[str, str, str]]:
-    """回傳 [(table_en, table_cn, summary_60), ...]，結果 cache 避免每次 rerun 重讀。"""
-    import csv as _csv
-    from agent.config import BASE_DIR
-    from agent.schema_summarizer import load_table_summaries
+def _load_available_tables() -> list[str]:
     from agent.table_retriever import _EXTRA_TABLES, _USED_TABLES_PATH
-
-    tables: list[str] = sorted(_EXTRA_TABLES)
+    tables: set[str] = set(_EXTRA_TABLES)
     if _USED_TABLES_PATH.exists():
         for line in _USED_TABLES_PATH.read_text(encoding="utf-8").splitlines():
             t = line.strip()
             if t:
-                tables.append(t)
-    tables = sorted(set(tables))
-
-    cn_map: dict[str, str] = {}
-    schema_path = BASE_DIR / "schema.csv"
-    if schema_path.exists():
-        with open(schema_path, encoding="utf-8-sig") as f:
-            for row in _csv.DictReader(f):
-                t = row.get("表格名稱", "").strip()
-                if t and t not in cn_map:
-                    cn_map[t] = row.get("表格中文名稱", "").strip()
-
-    summaries = load_table_summaries()
-    return [
-        (t, cn_map.get(t, ""), summaries.get(t, "")[:55])
-        for t in tables
-    ]
+                tables.add(t)
+    return sorted(tables)
 
 
 def _render_available_tables() -> None:
-    rows = _load_available_table_info()
-    with st.expander(f"可使用的資料表（共 {len(rows)} 張）", expanded=False):
-        col1, col2 = st.columns(2)
-        for i, (en, cn, summ) in enumerate(rows):
-            col = col1 if i % 2 == 0 else col2
-            label = f"**{en}**"
-            if cn:
-                label += f"　{cn}"
-            if summ:
-                label += f"\n\n　　{summ}…"
-            col.markdown(label)
+    tables = _load_available_tables()
+    names = "　".join(tables)
+    st.markdown(
+        f'<p style="font-size:0.72rem;color:#999;line-height:1.6;margin:0">'
+        f'可使用資料表（{len(tables)} 張）：{names}</p>',
+        unsafe_allow_html=True,
+    )
 
 
 # ── Main ──────────────────────────────────────────────────────────
