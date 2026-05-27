@@ -71,6 +71,9 @@ details summary:hover { color:#222; }
 
 /* Input */
 .stChatInput textarea { font-size:1rem; }
+
+/* Hide native dialog close (X) button — replaced by explicit buttons */
+[data-testid="stBaseButton-headerNoPadding"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -103,9 +106,21 @@ def _init():
         "primary_scene": "",
         "_plan": None,
         "_sql_results": {},
+        "_feedback_pending": False,   # SQL 生成後等待回饋
+        "_auto_fb_triggered": False,  # 閒置 timer 已自動觸發過一次
     }.items():
         if k not in st.session_state:
             st.session_state[k] = v
+
+
+def _reset_conversation():
+    """重置對話狀態（新對話 / 回饋送出後共用）。"""
+    for k in ("conversation", "hits", "all_cases"):
+        st.session_state[k] = [] if k == "conversation" else None
+    st.session_state.primary_scene = ""
+    st.session_state._plan = None
+    st.session_state._feedback_pending = False
+    st.session_state._auto_fb_triggered = False
 
 
 # ── Log helpers ───────────────────────────────────────────────────
@@ -392,6 +407,8 @@ def _confirm_and_generate(pending: dict) -> None:
         cost_usd=total_cost,
     )
     st.session_state.conversation.append(turn)
+    st.session_state._feedback_pending  = True
+    st.session_state._auto_fb_triggered = False
     st.session_state.hits          = pending["hits"]
     st.session_state.all_cases     = pending["all_cases"]
     st.session_state.primary_scene = pending["scene"]
@@ -527,7 +544,7 @@ def _save_feedback(rating: str, text: str):
 # ── Global feedback dialog ────────────────────────────────────────
 
 @st.dialog("你認為 SQL Agent 回答得如何？")
-def _feedback_dialog():
+def _feedback_dialog(start_new_convo: bool = False):
     rating_key = "_global_fb_rating"
     rating = st.session_state.get(rating_key)
 
@@ -536,7 +553,6 @@ def _feedback_dialog():
         if st.button("👍  有幫助", use_container_width=True,
                      type="primary" if rating == "up" else "secondary"):
             st.session_state[rating_key] = "up"
-            # 不呼叫 st.rerun()，讓按鈕點擊自然觸發 dialog 內重繪
     with c2:
         if st.button("👎  需改進", use_container_width=True,
                      type="primary" if rating == "down" else "secondary"):
@@ -550,7 +566,6 @@ def _feedback_dialog():
         key="_global_fb_text",
     )
 
-    # 重新讀取（按鈕點擊後 session_state 已更新）
     rating = st.session_state.get(rating_key)
 
     st.write("")
@@ -558,17 +573,21 @@ def _feedback_dialog():
         st.info(f"已選擇：{'👍 有幫助' if rating == 'up' else '👎 需改進'}　送出後將開始新對話。")
         if st.button("確定送出", type="primary", use_container_width=True):
             _save_feedback(rating, text)
-            # 清除 feedback 狀態
             st.session_state.pop(rating_key, None)
             st.session_state.pop("_global_fb_text", None)
-            # 重置對話，開始新一輪
-            for k in ("conversation", "hits", "all_cases"):
-                st.session_state[k] = [] if k == "conversation" else None
-            st.session_state.primary_scene = ""
-            st.session_state._plan = None
+            _reset_conversation()
             st.rerun()
     else:
         st.caption("請先選擇 👍 或 👎")
+
+    st.write("")
+    close_label = "狠心離開，直接開始新對話" if start_new_convo else "稍後再填"
+    if st.button(close_label, use_container_width=True):
+        st.session_state.pop(rating_key, None)
+        st.session_state.pop("_global_fb_text", None)
+        if start_new_convo:
+            _reset_conversation()
+        st.rerun()
 
 
 # ── Oracle SQL runner ─────────────────────────────────────────────
@@ -774,11 +793,11 @@ def main():
         if st.session_state.conversation or st.session_state._plan:
             st.write("")
             if st.button("新對話", use_container_width=True):
-                for k in ("conversation", "hits", "all_cases"):
-                    st.session_state[k] = [] if k == "conversation" else None
-                st.session_state.primary_scene = ""
-                st.session_state._plan = None
-                st.rerun()
+                if st.session_state.conversation and st.session_state.get("_feedback_pending"):
+                    _feedback_dialog(start_new_convo=True)
+                else:
+                    _reset_conversation()
+                    st.rerun()
 
     st.markdown('<hr class="sa-div">', unsafe_allow_html=True)
     _render_available_tables()
@@ -956,7 +975,45 @@ def main():
             use_container_width=True,
             key="global_fb_btn",
         ):
+            st.session_state._auto_fb_triggered = True
             _feedback_dialog()
+
+    # ── Idle feedback trigger（3 分鐘無操作自動彈出）────────────────
+    if (st.session_state.get("_feedback_pending")
+            and not st.session_state.get("_auto_fb_triggered")
+            and st.session_state.conversation):
+        import time as _t
+        import streamlit.components.v1 as _cv1
+        _cv1.html(f"""<script>
+(function(){{
+    var p = window.parent;
+    var IDLE_MS = 180000;
+    if (p._sqlIdleTimer) clearTimeout(p._sqlIdleTimer);
+    if (p._sqlIdleListener) {{
+        p.removeEventListener('mousemove', p._sqlIdleListener);
+        p.removeEventListener('keydown',   p._sqlIdleListener);
+        p.removeEventListener('click',     p._sqlIdleListener);
+        p.removeEventListener('scroll',    p._sqlIdleListener);
+    }}
+    p._sqlIdleListener = function() {{
+        clearTimeout(p._sqlIdleTimer);
+        p._sqlIdleTimer = setTimeout(function() {{
+            var btns = p.document.querySelectorAll('button');
+            for (var i = 0; i < btns.length; i++) {{
+                if (btns[i].innerText.indexOf('📝') !== -1) {{
+                    btns[i].click();
+                    return;
+                }}
+            }}
+        }}, IDLE_MS);
+    }};
+    p.addEventListener('mousemove', p._sqlIdleListener);
+    p.addEventListener('keydown',   p._sqlIdleListener);
+    p.addEventListener('click',     p._sqlIdleListener);
+    p.addEventListener('scroll',    p._sqlIdleListener);
+    p._sqlIdleListener();  /* ts={int(_t.time())} */
+}})();
+</script>""", height=0)
 
 
 if __name__ == "__main__":
