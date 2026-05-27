@@ -181,8 +181,17 @@ def _start_new_query(prompt: str, guardrail_tokens: dict | None = None) -> None:
 
     with st.container(border=True):
         # Phase 1：案例檢索 + 表格語意檢索
+        from agent.embedding import get_queue_info
         _s = st.empty()
-        _s.caption("⏳ Phase 1：向量檢索中…")
+        _busy, _n_waiting = get_queue_info()
+        if _busy or _n_waiting > 0:
+            _parts = ["目前有其他人正在使用向量檢索"]
+            if _n_waiting > 0:
+                _parts.append(f"有 {_n_waiting} 人在排隊")
+            _parts.append("請稍候…")
+            _s.warning("⏳ " + "，".join(_parts))
+        else:
+            _s.caption("⏳ Phase 1：向量檢索中…")
 
         hits = retrieve(req_text, all_cases, top_k=5)
         if not hits:
