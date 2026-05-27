@@ -217,24 +217,21 @@ def _render_sidebar(user: dict) -> None:
         return "更早"
 
     with st.sidebar:
-        # Header row: title + new-chat icon + collapse icon
-        hc1, hc2, hc3 = st.columns([4, 1, 1])
+        # Header row
+        hc1, hc2 = st.columns([3, 1])
         with hc1:
-            st.markdown(
-                '<p style="color:#ececec;font-weight:600;font-size:0.9rem;'
-                'margin:6px 0 0 2px;padding:0">SQL Agent</p>',
-                unsafe_allow_html=True,
-            )
+            st.markdown("**歷史對話**")
         with hc2:
-            if st.button("✏️", key="sidebar_new_convo", use_container_width=True, help="新對話"):
-                if st.session_state.conversation and st.session_state.get("_feedback_pending"):
-                    _feedback_dialog(start_new_convo=True)
-                else:
-                    _reset_conversation()
-                    st.rerun()
-        with hc3:
-            if st.button("◂", key="collapse_sidebar", use_container_width=True, help="收起"):
+            if st.button("收起", key="collapse_sidebar", use_container_width=True):
                 st.session_state._sidebar_visible = False
+                st.rerun()
+
+        if st.button("＋ 新對話", use_container_width=True, type="primary",
+                     key="sidebar_new_convo"):
+            if st.session_state.conversation and st.session_state.get("_feedback_pending"):
+                _feedback_dialog(start_new_convo=True)
+            else:
+                _reset_conversation()
                 st.rerun()
 
         st.markdown(
