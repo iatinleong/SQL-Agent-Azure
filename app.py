@@ -130,7 +130,10 @@ def _login_gate() -> bool:
         return True
 
     st.markdown('<p class="sa-title">SQL Agent</p>', unsafe_allow_html=True)
-    st.markdown('<p class="sa-sub">請先登入</p>', unsafe_allow_html=True)
+    st.markdown(
+        '<p class="sa-sub">登入後可留存歷史對話，並依你的使用習慣個人化 SQL 撰寫風格</p>',
+        unsafe_allow_html=True,
+    )
     st.markdown('<hr class="sa-div">', unsafe_allow_html=True)
 
     tab_login, tab_register = st.tabs(["登入", "註冊"])
