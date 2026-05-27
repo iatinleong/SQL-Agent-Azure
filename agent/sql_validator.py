@@ -302,7 +302,8 @@ def check_and_fix_hallucination(
     if not errors:
         return sql, [], True, {}
     fixed_sql, tokens = _fix_with_llm(sql, errors, model)
-    return fixed_sql, errors, False, tokens
+    remaining = check_hallucination(fixed_sql)
+    return fixed_sql, errors, len(remaining) == 0, tokens
 
 
 # ── 主入口（C-1）──────────────────────────────────────────────────

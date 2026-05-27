@@ -193,59 +193,60 @@ def _start_new_query(prompt: str, guardrail_tokens: dict | None = None) -> None:
             _s.warning("⏳ " + "，".join(_parts))
 
         set_waiting_callback(_on_waiting)
+        try:
+            hits = retrieve(req_text, all_cases, top_k=5)
+            if not hits:
+                _s.warning("找不到案例摘要，請先執行 `python -m agent --summarize`")
+                return
 
-        hits = retrieve(req_text, all_cases, top_k=5)
-        if not hits:
-            _s.warning("找不到案例摘要，請先執行 `python -m agent --summarize`")
-            return
+            # 實體擷取
+            from agent.entity_extractor import extract_entities
+            extraction = extract_entities(req_text)
+            entities_text = extraction.enriched_entities
 
-        # 實體擷取
-        from agent.entity_extractor import extract_entities
-        extraction = extract_entities(req_text)
-        entities_text = extraction.enriched_entities
+            # 表格語意檢索（含分數，供 UI 顯示）
+            from agent.table_retriever import retrieve_tables
+            from agent.schema_summarizer import load_table_summaries
+            from agent.generator import _get_union_tables, _load_schema_for_tables
+            _summaries = load_table_summaries()
+            available = set(_summaries.keys())
+            _semantic_with_scores: list[tuple[str, float]] = retrieve_tables(req_text, top_n=5, with_scores=True)
+            _semantic_tables = [t for t, _ in _semantic_with_scores]
 
-        # 表格語意檢索（含分數，供 UI 顯示）
-        from agent.table_retriever import retrieve_tables
-        from agent.schema_summarizer import load_table_summaries
-        from agent.generator import _get_union_tables, _load_schema_for_tables
-        _summaries = load_table_summaries()
-        available = set(_summaries.keys())
-        _semantic_with_scores: list[tuple[str, float]] = retrieve_tables(req_text, top_n=5, with_scores=True)
-        _semantic_tables = [t for t, _ in _semantic_with_scores]
+            # 補充業務說明給 entities_text
+            _table_desc_lines = []
+            for _t, _ in _semantic_with_scores:
+                _summary = _summaries.get(_t, "")
+                if _summary:
+                    _table_desc_lines.append(f"  • {_t}：{_summary[:80]}")
+            if _table_desc_lines:
+                _table_block = "【系統識別的相關資料來源（業務說明）】\n" + "\n".join(_table_desc_lines)
+                entities_text = (entities_text + "\n\n" + _table_block).strip()
 
-        # 補充業務說明給 entities_text
-        _table_desc_lines = []
-        for _t, _ in _semantic_with_scores:
-            _summary = _summaries.get(_t, "")
-            if _summary:
-                _table_desc_lines.append(f"  • {_t}：{_summary[:80]}")
-        if _table_desc_lines:
-            _table_block = "【系統識別的相關資料來源（業務說明）】\n" + "\n".join(_table_desc_lines)
-            entities_text = (entities_text + "\n\n" + _table_block).strip()
+            # 候選表格 schema（供 Phase 2 report_planner 使用）
+            _candidate_set_plan = set(_get_union_tables(hits, all_cases, available))
+            _candidate_set_plan.update(t for t in _semantic_tables if t in available)
+            for _t in extraction.extra_tables:
+                if _t in available:
+                    _candidate_set_plan.add(_t)
+            schema_for_plan = _load_schema_for_tables(sorted(_candidate_set_plan))
 
-        # 候選表格 schema（供 Phase 2 report_planner 使用）
-        _candidate_set_plan = set(_get_union_tables(hits, all_cases, available))
-        _candidate_set_plan.update(t for t in _semantic_tables if t in available)
-        for _t in extraction.extra_tables:
-            if _t in available:
-                _candidate_set_plan.add(_t)
-        schema_for_plan = _load_schema_for_tables(sorted(_candidate_set_plan))
+            # Phase 1 log：案例 + 表格語意
+            _table_rows = "\n".join(
+                f"| `{t}` | {_summaries.get(t, '')[:55]} | {s:.4f} |"
+                for t, s in _semantic_with_scores
+            )
+            phase1_log = (
+                "**Top-5 案例檢索**\n\n"
+                + _fmt_phase1(hits, all_cases)
+                + "\n\n**表格語意檢索 Top-5**\n\n"
+                "| 表格 | 業務說明 | 相似度 |\n"
+                "|------|---------|--------|\n"
+                + _table_rows
+            )
+        finally:
+            clear_waiting_callback()
 
-        # Phase 1 log：案例 + 表格語意
-        _table_rows = "\n".join(
-            f"| `{t}` | {_summaries.get(t, '')[:55]} | {s:.4f} |"
-            for t, s in _semantic_with_scores
-        )
-        phase1_log = (
-            "**Top-5 案例檢索**\n\n"
-            + _fmt_phase1(hits, all_cases)
-            + "\n\n**表格語意檢索 Top-5**\n\n"
-            "| 表格 | 業務說明 | 相似度 |\n"
-            "|------|---------|--------|\n"
-            + _table_rows
-        )
-
-        clear_waiting_callback()
         _s.empty()
         with st.expander("Phase 1：向量檢索", expanded=False):
             st.markdown(phase1_log)
