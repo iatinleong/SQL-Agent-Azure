@@ -197,6 +197,20 @@ def _start_new_query(prompt: str, guardrail_tokens: dict | None = None) -> None:
         extraction = extract_entities(req_text)
         entities_text = extraction.enriched_entities
 
+        # 表格語意檢索：找出與需求最相關的表格，補充業務說明給 report_planner
+        from agent.table_retriever import retrieve_tables
+        from agent.schema_summarizer import load_table_summaries
+        _summaries = load_table_summaries()
+        _semantic_tables = retrieve_tables(req_text, top_n=5)
+        _table_desc_lines = []
+        for _t in _semantic_tables:
+            _summary = _summaries.get(_t, "")
+            if _summary:
+                _table_desc_lines.append(f"  • {_t}：{_summary[:80]}")
+        if _table_desc_lines:
+            _table_block = "【系統識別的相關資料來源（業務說明）】\n" + "\n".join(_table_desc_lines)
+            entities_text = (entities_text + "\n\n" + _table_block).strip()
+
         # Phase 2：報表需求確認
         _s = st.empty()
         _s.caption("⏳ Phase 2：分析報表結構中…")
