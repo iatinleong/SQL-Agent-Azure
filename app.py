@@ -909,7 +909,7 @@ def main():
     is_first = not st.session_state.conversation
     prompt = st.chat_input(
         "描述你的報表需求..." if is_first else "繼續追問，或修改 SQL...",
-        max_chars=100,
+        max_chars=300,
     )
 
     if prompt:
