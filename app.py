@@ -22,7 +22,7 @@ st.set_page_config(
     page_title="SQL Agent",
     page_icon="⬡",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 # ── CSS ───────────────────────────────────────────────────────────
@@ -110,6 +110,9 @@ def _init():
         "_auto_fb_triggered": False,  # 閒置 timer 已自動觸發過一次
         "current_user": None,         # {"employee_id": ..., "display_name": ...}
         "_session_token": None,       # cookie 對應的 session token
+        "_current_session_id": None,  # 目前對話在 Supabase 的 UUID
+        "_session_title": "",         # 目前對話標題（第一句需求）
+        "_collapse_trigger": False,   # 觸發 sidebar 收起的 JS 旗標
     }.items():
         if k not in st.session_state:
             st.session_state[k] = v
@@ -123,6 +126,74 @@ def _reset_conversation():
     st.session_state._plan = None
     st.session_state._feedback_pending = False
     st.session_state._auto_fb_triggered = False
+    st.session_state._current_session_id = None
+    st.session_state._session_title = ""
+
+
+def _load_and_restore_session(session_id: str) -> None:
+    """從 Supabase 載入歷史 session，恢復到 session_state。"""
+    from agent.session_store import load_session_turns
+    turn_dicts = load_session_turns(session_id)
+    turns = [Turn(**d) for d in turn_dicts]
+    _reset_conversation()
+    st.session_state.conversation = turns
+    st.session_state._current_session_id = session_id
+    if turns:
+        st.session_state._session_title = turns[0].user_query
+        st.session_state._feedback_pending = True
+
+
+def _render_sidebar(user: dict) -> None:
+    """左側歷史對話欄。"""
+    with st.sidebar:
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            st.markdown("**歷史對話**")
+        with c2:
+            if st.button("收起", key="collapse_sidebar", use_container_width=True):
+                st.session_state._collapse_trigger = True
+                st.rerun()
+
+        if st.button("＋ 新對話", use_container_width=True, type="primary",
+                     key="sidebar_new_convo"):
+            if st.session_state.conversation and st.session_state.get("_feedback_pending"):
+                _feedback_dialog(start_new_convo=True)
+            else:
+                _reset_conversation()
+                st.rerun()
+
+        st.markdown("---")
+
+        from agent.session_store import load_sessions_list
+        sessions = load_sessions_list(user["employee_id"])
+
+        if not sessions:
+            st.caption("尚無歷史對話")
+        else:
+            current_id = st.session_state.get("_current_session_id")
+            for sess in sessions:
+                title = sess.get("title", "（未命名）")
+                label = (title[:28] + "…") if len(title) > 28 else title
+                is_active = sess["id"] == current_id
+                if st.button(
+                    label,
+                    key=f"sess_{sess['id']}",
+                    use_container_width=True,
+                    type="primary" if is_active else "secondary",
+                ):
+                    _load_and_restore_session(sess["id"])
+                    st.rerun()
+
+    # 收起 sidebar 的 JS（由旗標觸發，避免每次 render 都執行）
+    if st.session_state.get("_collapse_trigger"):
+        st.session_state._collapse_trigger = False
+        import streamlit.components.v1 as _cv1
+        _cv1.html("""<script>
+setTimeout(function(){
+    var btn = window.parent.document.querySelector('[data-testid="stSidebarCollapseButton"]');
+    if (btn) btn.click();
+}, 150);
+</script>""", height=0)
 
 
 def _login_gate() -> bool:
@@ -468,6 +539,21 @@ def _confirm_and_generate(pending: dict) -> None:
     st.session_state.conversation.append(turn)
     st.session_state._feedback_pending  = True
     st.session_state._auto_fb_triggered = False
+
+    # 存 / 更新 Supabase session
+    if st.session_state.get("current_user"):
+        import uuid as _uuid
+        from agent.session_store import upsert_session
+        if not st.session_state.get("_current_session_id"):
+            st.session_state._current_session_id = str(_uuid.uuid4())
+            st.session_state._session_title = pending["prompt"][:60]
+        upsert_session(
+            st.session_state._current_session_id,
+            st.session_state.current_user["employee_id"],
+            st.session_state._session_title,
+            st.session_state.conversation,
+        )
+
     st.session_state.hits          = pending["hits"]
     st.session_state.all_cases     = pending["all_cases"]
     st.session_state.primary_scene = pending["scene"]
@@ -859,6 +945,7 @@ def main():
         return
 
     user = st.session_state.current_user or {}
+    _render_sidebar(user)
 
     # ── Header ────────────────────────────────────────────────────
     h1, _, h2, h3 = st.columns([5, 2, 1, 1])
@@ -1053,6 +1140,16 @@ def main():
                     turn = _run_and_render_refiner(prompt, guardrail_tokens=guardrail_tokens)
                     if turn:
                         st.session_state.conversation.append(turn)
+                        # 更新 Supabase session（refine）
+                        if (st.session_state.get("current_user")
+                                and st.session_state.get("_current_session_id")):
+                            from agent.session_store import upsert_session
+                            upsert_session(
+                                st.session_state._current_session_id,
+                                st.session_state.current_user["employee_id"],
+                                st.session_state.get("_session_title", ""),
+                                st.session_state.conversation,
+                            )
             except Exception as e:
                 import traceback
                 st.error(f"錯誤：{e}\n\n```\n{traceback.format_exc()}\n```")
