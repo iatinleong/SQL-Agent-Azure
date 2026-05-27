@@ -152,10 +152,9 @@ def _login_gate(cookie_manager) -> bool:
                 ok, result = login_user(emp_id.strip(), password)
                 if ok:
                     token = create_session(result["employee_id"], result["display_name"])
-                    from datetime import datetime, timedelta
                     cookie_manager.set(
                         "sql_agent_token", token,
-                        expires_at=datetime.now() + timedelta(days=30),
+                        max_age=60 * 60 * 24 * 30,  # 30 天（秒）
                     )
                     st.session_state.current_user = result
                     st.session_state._session_token = token
@@ -850,8 +849,8 @@ def main():
     _init()
 
     # Cookie manager（必須在所有 widget 之前初始化）
-    import extra_streamlit_components as stx
-    cookie_manager = stx.CookieManager(key="sql_agent_cookies")
+    from streamlit_cookies_controller import CookieController
+    cookie_manager = CookieController(key="sql_agent_cookies")
 
     # 自動從 cookie 還原登入狀態
     if not st.session_state.get("current_user"):
@@ -892,7 +891,7 @@ def main():
         if st.button("登出", use_container_width=True):
             from agent.auth import delete_session
             delete_session(st.session_state.get("_session_token", ""))
-            cookie_manager.delete("sql_agent_token")
+            cookie_manager.remove("sql_agent_token")
             st.session_state.current_user = None
             st.session_state._session_token = None
             _reset_conversation()
