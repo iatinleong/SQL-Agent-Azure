@@ -33,25 +33,25 @@ def plan_report(
     case_sqls: list[str],
     qa_history: list[dict] | None = None,
     entities_text: str = "",
+    schema_text: str = "",
     model: str = CLASSIFICATION_MODEL,
 ) -> ReportPlan:
     """
     qa_history：[{"q": "...", "a": "..."}, ...]，代表已確認的問答記錄。
     entities_text：實體擷取結果（分公司代碼、商品代碼、WHERE 提示等）。
+    schema_text：候選表格欄位定義，幫助 LLM 基於實際可用欄位釐清需求。
     """
     from datetime import date as _date
     today = _date.today().strftime("%Y/%m/%d")
 
     sqls_text = "\n\n---\n\n".join(case_sqls[:5]) if case_sqls else "（無歷史案例）"
 
-    entities_block = (
-        f"\n\n【系統已自動識別的實體資訊（以下為確定事實，絕對不可詢問使用者，直接使用）】\n{entities_text}"
-        if entities_text.strip() else ""
-    )
+    entities_content = entities_text.strip() if entities_text.strip() else "（無）"
+    schema_content = schema_text.strip() if schema_text.strip() else "（無）"
 
     qa_block = ""
     if qa_history:
-        lines = [f"系統問：{item['q']}\n使用者答：{item['a']}" for item in qa_history]
+        lines = [f"  系統問：{item['q']}\n  使用者答：{item['a']}" for item in qa_history]
         qa_block = "\n\n【雙方對話記錄（已確認的資訊，請以此為依據）】\n" + "\n\n".join(lines)
 
     prompt = f"""\
@@ -60,8 +60,17 @@ def plan_report(
 【使用者需求】
 {requirement}
 
-【相似歷史案例 SQL（了解這類需求通常怎麼寫）】
-{sqls_text}{entities_block}{qa_block}
+【參考資料 1：相似歷史案例 SQL】
+以下是語意相似的歷史需求案例，幫助了解這類需求通常如何實作，僅供參考。
+{sqls_text}
+
+【參考資料 2：系統自動識別的確定資訊】
+以下是從需求中自動擷取的確定事實（分公司代碼、商品代碼、相關資料來源業務說明等）。這些是已知的，絕對不可再詢問使用者，直接採用。
+{entities_content}
+
+【參考資料 3：可用欄位定義】
+以下是候選表格的欄位清單，用於判斷哪些資料可查、需求是否可實現。與使用者溝通時絕對不可提及欄位英文名稱或表格英文名稱。
+{schema_content}{qa_block}
 
 你的任務是確認是否已有足夠資訊來生成報表。判斷原則：
 - 若有任何真正無法從需求或歷史案例中判斷的關鍵資訊（例如：時間範圍不明確、不知道要篩哪個條件、不確定業績指標的定義）→ status="ask"，提一個最重要的問題。

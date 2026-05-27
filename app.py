@@ -200,7 +200,9 @@ def _start_new_query(prompt: str, guardrail_tokens: dict | None = None) -> None:
         # 表格語意檢索：找出與需求最相關的表格，補充業務說明給 report_planner
         from agent.table_retriever import retrieve_tables
         from agent.schema_summarizer import load_table_summaries
+        from agent.generator import _get_union_tables, _load_schema_for_tables
         _summaries = load_table_summaries()
+        available = set(_summaries.keys())
         _semantic_tables = retrieve_tables(req_text, top_n=5)
         _table_desc_lines = []
         for _t in _semantic_tables:
@@ -211,11 +213,19 @@ def _start_new_query(prompt: str, guardrail_tokens: dict | None = None) -> None:
             _table_block = "【系統識別的相關資料來源（業務說明）】\n" + "\n".join(_table_desc_lines)
             entities_text = (entities_text + "\n\n" + _table_block).strip()
 
+        # 候選表格 schema（供 Phase 2 report_planner 使用）
+        _candidate_set_plan = set(_get_union_tables(hits, all_cases, available))
+        _candidate_set_plan.update(t for t in _semantic_tables if t in available)
+        for _t in extraction.extra_tables:
+            if _t in available:
+                _candidate_set_plan.add(_t)
+        schema_for_plan = _load_schema_for_tables(sorted(_candidate_set_plan))
+
         # Phase 2：報表需求確認
         _s = st.empty()
         _s.caption("⏳ Phase 2：分析報表結構中…")
         case_sqls = [_get_case_sql_text(h.case_id, all_cases) for h in hits]
-        plan = plan_report(req_text, case_sqls, entities_text=entities_text)
+        plan = plan_report(req_text, case_sqls, entities_text=entities_text, schema_text=schema_for_plan)
         _s.empty()
 
     st.session_state._plan = {
@@ -228,6 +238,7 @@ def _start_new_query(prompt: str, guardrail_tokens: dict | None = None) -> None:
         "guardrail_tokens": guardrail_tokens or {},
         "case_sqls":        case_sqls,
         "entities_text":    entities_text,
+        "schema_for_plan":  schema_for_plan,
         "plan":             plan,
         "qa_history":       [],
         "all_plan_tokens":  dict(plan.tokens),
@@ -791,6 +802,7 @@ def main():
                                 pending["case_sqls"],
                                 qa_history=qa_history,
                                 entities_text=pending.get("entities_text", ""),
+                                schema_text=pending.get("schema_for_plan", ""),
                             )
                             _s.empty()
                             pending["plan"] = new_plan
@@ -823,6 +835,7 @@ def main():
                     pending["case_sqls"],
                     qa_history=qa_history,
                     entities_text=pending.get("entities_text", ""),
+                    schema_text=pending.get("schema_for_plan", ""),
                 )
                 _s.empty()
                 pending["plan"] = new_plan
