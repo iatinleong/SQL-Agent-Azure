@@ -257,6 +257,29 @@ def _get_case_sql_text(case_id: str, all_cases: list[dict], cap: int = _SQL_CAP_
     return full
 
 
+# ── 參考案例文字 ───────────────────────────────────────────────────
+
+def _build_cases_text(
+    hits: list[RetrievalHit],
+    all_cases: list[dict],
+) -> str:
+    """格式化 Top-5 案例 SQL（含 case_id 與相似度分數）供 Step A 注入，僅供參考。"""
+    if not hits:
+        return ""
+    case_map = {str(c.get("資料夾")): c for c in all_cases}
+    blocks: list[str] = []
+    for hit in hits:
+        case = case_map.get(hit.case_id, {})
+        req_summary = (case.get("需求") or {}).get("需求摘要", "")[:80]
+        sql_text = _get_case_sql_text(hit.case_id, all_cases)
+        blocks.append(
+            f"=== 案例 [{hit.case_id}]（相似度 {hit.score:.4f}）===\n"
+            f"需求摘要：{req_summary}\n\n"
+            f"{sql_text}"
+        )
+    return "【參考案例 SQL（語義相似，僅供參考）】\n\n" + "\n\n".join(blocks)
+
+
 # ── Step A ─────────────────────────────────────────────────────────
 
 _STEP_A_SYSTEM = """\
@@ -297,8 +320,9 @@ def _step_a(
     skills_text: str = "",
     today: str = "",
     report_plan_text: str = "",
+    cases_text: str = "",
 ) -> tuple[str, str, int, int]:
-    """Step A：LLM 從候選池自由生成 SQL + 思路。回傳 (sql, reasoning, in_tok, out_tok)。"""
+    """Step A：LLM 從候選池生成 SQL + 思路（附參考案例）。回傳 (sql, reasoning, in_tok, out_tok)。"""
     optional_blocks = []
     if report_plan_text:
         optional_blocks.append(report_plan_text)
@@ -310,6 +334,8 @@ def _step_a(
         optional_blocks.append(metrics_text)
     if relationships_text:
         optional_blocks.append(relationships_text)
+    if cases_text:
+        optional_blocks.append(cases_text)
     extra = ("\n\n" + "\n\n".join(optional_blocks)) if optional_blocks else ""
 
     user_prompt = f"""\
@@ -326,7 +352,7 @@ def _step_a(
 （完整 Oracle SQL）
 
 --- 思路 ---
-（你選了哪些表格及原因、JOIN 條件、時間篩選、聚合邏輯）"""
+（你選了哪些表格及原因、JOIN 條件、時間篩選、聚合邏輯；若有參考案例的寫法，說明參考了哪些）"""
 
     system = (f"今日日期：{today}\n\n" + _STEP_A_SYSTEM) if today else _STEP_A_SYSTEM
     resp = _chat(
@@ -355,69 +381,62 @@ def _step_a(
 # ── Step B ─────────────────────────────────────────────────────────
 
 _STEP_B_SYSTEM = """\
-你是一位 Oracle SQL 審查員，熟悉台灣金融業報表邏輯。
-你在第一輪已寫了一份 SQL，現在需要對照歷史參考案例與欄位定義來檢視並改進。
-⚠️ 參考案例是語義相似度檢索結果，不一定完全符合本次需求，也不代表最佳寫法，僅供參考。
-最終判斷依據是【報表需求】和【欄位定義】，而非參考案例。"""
+你是一位 Oracle SQL 審查員，熟悉台灣金融業報表邏輯與資料倉儲設計。
+你的任務是審查 Step A 生成的 SQL，逐項確認以下三點，若發現問題直接修正：
+
+1. 【Oracle 語法正確性】（同 Step A 語法規則，嚴格遵守）
+   - Oracle 19c+ 語法，禁用其他方言（LIMIT、ILIKE 等）
+   - 取前 N 筆：FETCH FIRST N ROWS ONLY 或 ROWNUM，不使用 LIMIT
+   - 日期函數：TO_DATE()、TRUNC()、ADD_MONTHS()、LAST_DAY()
+   - NULL 處理：NVL() / IS NULL / IS NOT NULL，避免 = NULL
+   - 沒有實際資料表的 SELECT 必須加 FROM DUAL
+   - 效能：WHERE 先過濾高基數欄位；避免在索引欄位套函數；大表多次存取用 CTE
+
+2. 【需求符合性】（對照報表需求逐項檢核）
+   - 報表維度（例：客戶層 / 帳號層 / 分公司層）是否正確？
+   - 時間範圍、篩選條件是否完整？
+   - 聚合邏輯、計算方式是否符合需求語意？
+
+3. 【欄位與表格存在性】（對照提供的欄位定義）
+   - 所有 FROM / JOIN 的表格是否存在？
+   - 所有 SELECT / WHERE / GROUP BY 的欄位是否存在於對應表格？
+
+⚠️ 保守原則：沒有明確問題的地方不改。若三項均通過，直接輸出原 SQL。
+⚠️ 最終輸出必須是完整可執行的 Oracle SQL，不可輸出片段。
+DM_S_VIEW schema 前綴規則同 Step A。"""
 
 
 def _step_b(
     requirement: str,
     step_a_sql: str,
     step_a_reasoning: str,
-    hits: list[RetrievalHit],
-    all_cases: list[dict],
     schema_text: str,
     model: str,
-) -> tuple[str, str, str, int, int]:
-    """Step B：對照 top-5 案例 SQL 自我批判，輸出最終 SQL。
-    回傳 (analysis, final_reasoning, sql, in_tok, out_tok)。
-    analysis      = 與參考案例的比對（items 1-3）
-    final_reasoning = 最終 SQL 設計決策與原因（item 4）
+) -> tuple[str, str, int, int]:
+    """Step B：語法 + 需求符合 + schema 欄位三項審查，輸出最終 SQL。
+    回傳 (analysis, final_sql, in_tok, out_tok)。
     """
-    case_map = {str(c.get("資料夾")): c for c in all_cases}
-
-    case_blocks: list[str] = []
-    for hit in hits:
-        case = case_map.get(hit.case_id, {})
-        req_summary = (case.get("需求") or {}).get("需求摘要", "")[:80]
-        sql_text = _get_case_sql_text(hit.case_id, all_cases)
-        case_blocks.append(
-            f"=== 參考案例 [{hit.case_id}]（相似度 {hit.score:.4f}）===\n"
-            f"需求摘要：{req_summary}\n\n"
-            f"{sql_text}"
-        )
-    case_sqls_text = "\n\n".join(case_blocks)
-
     user_prompt = f"""\
 【報表需求】
 {requirement}
 
-【第一輪 SQL】
+【Step A 生成的 SQL】
 {step_a_sql}
 
-【第一輪思路】
+【Step A 思路】
 {step_a_reasoning}
 
-【參考案例（語義相似，僅供參考）】
-{case_sqls_text}
-
-【所有相關表格欄位定義】
+【欄位定義（候選池 + 案例表格，比 Step A 更廣）】
 {schema_text}
 
 請依以下格式輸出：
 
---- 分析 ---
-（比較第一輪思路與參考案例：
-  1. 表格選擇是否一致或有差異？
-  2. JOIN 條件有無不同？
-  3. 篩選條件、聚合邏輯有無可改進？）
-
---- 最終思路 ---
-（說明這份 SQL的完整設計決策，為何能符合使用者需求：選了哪些表格、JOIN 條件、時間篩選、聚合邏輯，使用者的需求的核心目標是什麼、這樣的寫法如何回應它、哪些設計決策是為了滿足哪個需求點）
+--- 審查結果 ---
+（逐一確認三個面向：語法、需求符合、欄位存在；
+  發現問題說明修正了什麼；三項均通過則寫「審查通過，無修正」）
 
 --- 最終 SQL ---
-（最終版完整 Oracle SQL）"""
+（完整 Oracle SQL）"""
 
     resp = _chat(
         model,
@@ -431,24 +450,21 @@ def _step_b(
     in_tok = resp.usage.prompt_tokens
     out_tok = resp.usage.completion_tokens
 
-    analysis, final_reasoning, final_sql = "", "", ""
-    if "--- 分析 ---" in raw:
-        after_analysis = raw.split("--- 分析 ---", 1)[1]
-        if "--- 最終思路 ---" in after_analysis:
-            analysis = after_analysis.split("--- 最終思路 ---", 1)[0].strip()
-            after_reasoning = after_analysis.split("--- 最終思路 ---", 1)[1]
-            if "--- 最終 SQL ---" in after_reasoning:
-                final_reasoning = after_reasoning.split("--- 最終 SQL ---", 1)[0].strip()
-                final_sql = after_reasoning.split("--- 最終 SQL ---", 1)[1].strip()
-            else:
-                final_sql = after_reasoning.strip()
-        elif "--- 最終 SQL ---" in after_analysis:
-            analysis = after_analysis.split("--- 最終 SQL ---", 1)[0].strip()
-            final_sql = after_analysis.split("--- 最終 SQL ---", 1)[1].strip()
+    analysis, final_sql = "", ""
+    if "--- 審查結果 ---" in raw:
+        after_review = raw.split("--- 審查結果 ---", 1)[1]
+        if "--- 最終 SQL ---" in after_review:
+            analysis = after_review.split("--- 最終 SQL ---", 1)[0].strip()
+            final_sql = after_review.split("--- 最終 SQL ---", 1)[1].strip()
+        else:
+            analysis = after_review.strip()
     else:
         final_sql = raw.strip()
 
-    return analysis, final_reasoning, final_sql, in_tok, out_tok
+    if not final_sql:
+        final_sql = step_a_sql  # fallback
+
+    return analysis, final_sql, in_tok, out_tok
 
 
 # ── 主入口 ─────────────────────────────────────────────────────────
@@ -512,7 +528,7 @@ def generate(
     skills_count = skills_text.count("▸ [") if skills_text else 0
 
     print(f"\n{SEP}")
-    print(f"=== Step A：候選池草稿生成（模型：{model}）===")
+    print(f"=== Step A：候選池草稿生成（模型：{model}，注入 {len(hits)} 筆參考案例）===")
     print(f"  候選表格（{len(candidate_tables)} 張）：{', '.join(candidate_tables)}")
     print(f"  注入 relationships：{rel_count} 條（已依候選池過濾）")
     print(f"  注入 metrics：全部 {len([l for l in metrics_text.splitlines() if l.startswith('▸')])} 條")
@@ -521,17 +537,19 @@ def generate(
 
     from datetime import date as _date
     today = _date.today().strftime("%Y/%m/%d")
+    cases_text = _build_cases_text(hits, all_cases)
     step_a_sql, step_a_reasoning, a_in, a_out = _step_a(
         requirement, step_a_schema, rels_text, metrics_text, model,
         entities_text=extraction.enriched_entities,
         skills_text=skills_text,
         today=today,
         report_plan_text=report_plan_text,
+        cases_text=cases_text,
     )
     print(f"  tokens：in={a_in}  out={a_out}")
     print(f"\n{step_a_sql[:400]}{'...' if len(step_a_sql) > 400 else ''}")
 
-    # ── Step B：擴展 schema，加入 top-5 案例也有用到的表格 ──────────
+    # ── Step B：擴展 schema（候選池 + 案例表格），三項審查 ────────────
     all_hit_tables: set[str] = set(candidate_tables)
     for hit in hits:
         all_hit_tables |= _extract_truth_tables(case_map.get(hit.case_id, {}), available)
@@ -539,11 +557,11 @@ def generate(
     step_b_schema = _load_schema_for_tables(all_tables)
 
     print(f"\n{SEP}")
-    print(f"=== Step B：自我批判（注入 {len(hits)} 筆參考案例）===")
-    print(f"  完整表格範圍（{len(all_tables)} 張）：{', '.join(all_tables)}")
+    print(f"=== Step B：SQL 審查（語法 + 需求符合 + 欄位存在）===")
+    print(f"  審查用 schema 範圍（{len(all_tables)} 張）：{', '.join(all_tables)}")
 
-    analysis, final_reasoning, final_sql, b_in, b_out = _step_b(
-        requirement, step_a_sql, step_a_reasoning, hits, all_cases, step_b_schema, model
+    analysis, final_sql, b_in, b_out = _step_b(
+        requirement, step_a_sql, step_a_reasoning, step_b_schema, model
     )
     print(f"  tokens：in={b_in}  out={b_out}")
 
@@ -621,7 +639,7 @@ def generate(
         step_a_sql=step_a_sql,
         step_a_reasoning=step_a_reasoning,
         final_analysis=analysis,
-        final_reasoning=final_reasoning,
+        final_reasoning=step_a_reasoning,   # Step A 思路供 UI「SQL 思路」expander 顯示
         final_sql=final_sql,
         step_c_log=step_c_log,
         tokens={

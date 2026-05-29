@@ -530,16 +530,16 @@ def _confirm_and_generate(pending: dict) -> None:
         + (f"**Step A 思路：**\n\n{gen.step_a_reasoning}" if gen.step_a_reasoning else "")
     )
     step_b_log = (
-        f"**完整表格範圍（{len(gen.all_tables)} 張）：**  \n"
+        f"**審查用 schema 範圍（{len(gen.all_tables)} 張）：**  \n"
         f"{', '.join(gen.all_tables)}\n\n"
-        + (f"**Step B 分析：**\n\n{gen.final_analysis}" if gen.final_analysis else "")
+        + (f"**審查結果：**\n\n{gen.final_analysis}" if gen.final_analysis else "")
     )
     _s.empty()
     with st.expander("Prompt 注入內容", expanded=False):
         st.markdown(_fmt_injected(gen.injected_summary))
     with st.expander("Step A：草稿生成", expanded=False):
         st.markdown(step_a_log)
-    with st.expander("Step B：自我批判", expanded=False):
+    with st.expander("Step B：SQL 審查", expanded=False):
         st.markdown(step_b_log)
 
     # Step C：語法驗證 + 決定性幻覺檢查結果
@@ -942,7 +942,7 @@ def _render_turn(turn: Turn, idx: int):
             ("Phase 2：報表需求確認", turn.phase2_log),
             ("Prompt 注入內容", turn.injected_log),
             ("Step A：草稿生成", turn.step_a_log),
-            ("Step B：自我批判", turn.step_b_log),
+            ("Step B：SQL 審查", turn.step_b_log),
             ("Step C：語法驗證", turn.step_c_log),
         ]
         for label, log in log_sections:
