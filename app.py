@@ -155,7 +155,6 @@ def _init():
         "_session_token": None,       # cookie 對應的 session token
         "_current_session_id": None,  # 目前對話在 Supabase 的 UUID
         "_session_title": "",         # 目前對話標題（第一句需求）
-        "_sidebar_visible": True,     # 歷史對話欄是否顯示
     }.items():
         if k not in st.session_state:
             st.session_state[k] = v
@@ -208,20 +207,7 @@ def _render_sidebar(user: dict) -> None:
         return "更早"
 
     with st.sidebar:
-        # 收起狀態：只顯示展開按鈕
-        if not st.session_state.get("_sidebar_visible", True):
-            if st.button("» 展開", key="expand_sidebar", use_container_width=True):
-                st.session_state._sidebar_visible = True
-                st.rerun()
-            return
-        # Header row
-        hc1, hc2 = st.columns([3, 1])
-        with hc1:
-            st.markdown("**歷史對話**")
-        with hc2:
-            if st.button("收起", key="collapse_sidebar", use_container_width=True):
-                st.session_state._sidebar_visible = False
-                st.rerun()
+        st.markdown("**歷史對話**")
 
         if st.button("＋ 新對話", use_container_width=True, type="primary",
                      key="sidebar_new_convo"):
@@ -983,10 +969,6 @@ def _render_available_tables() -> None:
 
 def main():
     _init()
-
-    # 確保 sidebar DOM 存在（CSS 深色背景才能套用）
-    with st.sidebar:
-        st.empty()
 
     # 自動從 URL query param 還原登入狀態（refresh 後 URL 不變，token 還在）
     if not st.session_state.get("current_user"):
