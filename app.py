@@ -188,14 +188,6 @@ def _load_and_restore_session(session_id: str) -> None:
 
 def _render_sidebar(user: dict) -> None:
     """左側歷史對話欄（ChatGPT 風格，依日期分組）。"""
-    if not st.session_state.get("_sidebar_visible", True):
-        st.markdown("""
-<style>
-[data-testid="stSidebar"],
-[data-testid="stSidebarCollapsedControl"] { display: none !important; }
-</style>""", unsafe_allow_html=True)
-        return
-
     from datetime import date as _date, timedelta as _td
     from agent.session_store import load_sessions_list
 
@@ -217,6 +209,12 @@ def _render_sidebar(user: dict) -> None:
         return "更早"
 
     with st.sidebar:
+        # 收起狀態：只顯示展開按鈕
+        if not st.session_state.get("_sidebar_visible", True):
+            if st.button("» 展開", key="expand_sidebar", use_container_width=True):
+                st.session_state._sidebar_visible = True
+                st.rerun()
+            return
         # Header row
         hc1, hc2 = st.columns([3, 1])
         with hc1:
@@ -535,17 +533,17 @@ def _confirm_and_generate(pending: dict) -> None:
     with st.expander("Step A：草稿生成", expanded=False):
         st.markdown(step_a_log)
 
-    # Step C：全套驗證結果
+    # Step B：全套驗證結果
     step_c_log = gen.step_c_log
     if step_c_log:
         all_ok = all(e.get("passed", True) for e in step_c_log)
-        label = f"Step C：驗證　{'✅ 通過' if all_ok else '❌ 有問題'}"
+        label = f"Step B：驗證　{'✅ 通過' if all_ok else '❌ 有問題'}"
         with st.expander(label, expanded=not all_ok):
             for entry in step_c_log:
                 if entry.get("passed"):
-                    st.success(f"Round {entry['round']}：驗證通過")
+                    st.success(f"Round {entry.get('round', '?')}：驗證通過")
                 else:
-                    st.warning(f"Round {entry['round']}：發現 {len(entry['errors'])} 個問題，已送 LLM 修正")
+                    st.warning(f"Round {entry.get('round', '?')}：發現 {len(entry['errors'])} 個問題，已送 LLM 修正")
                     for err in entry["errors"]:
                         st.code(err, language="text")
 
@@ -926,19 +924,19 @@ def _render_turn(turn: Turn, idx: int):
             ("Phase 2：報表需求確認", turn.phase2_log),
             ("Prompt 注入內容", turn.injected_log),
             ("Step A：草稿生成", turn.step_a_log),
-            ("Step C：驗證", turn.step_c_log),
+            ("Step B：驗證", turn.step_c_log),
         ]
         for label, log in log_sections:
-            if label == "Step C：驗證":
+            if label == "Step B：驗證":
                 if log:
                     all_ok = all(e.get("passed", True) for e in log)
                     icon = "✅" if all_ok else "❌"
                     with st.expander(f"{label}　{icon}", expanded=False):
                         for entry in log:
                             if entry.get("passed"):
-                                st.success(f"Round {entry['round']}：驗證通過")
+                                st.success(f"Round {entry.get('round', '?')}：驗證通過")
                             else:
-                                st.warning(f"Round {entry['round']}：{len(entry['errors'])} 個問題")
+                                st.warning(f"Round {entry.get('round', '?')}：{len(entry['errors'])} 個問題")
                                 for err in entry["errors"]:
                                     st.code(err, language="text")
             elif log.strip():
@@ -1004,11 +1002,6 @@ def main():
 
     # ── Header ────────────────────────────────────────────────────
     h1, _, h2, h3 = st.columns([5, 2, 1, 1])
-    if not st.session_state.get("_sidebar_visible", True):
-        with h1:
-            if st.button("☰ 歷史對話", key="expand_sidebar"):
-                st.session_state._sidebar_visible = True
-                st.rerun()
     with h1:
         st.markdown('<p class="sa-title">SQL Agent</p>', unsafe_allow_html=True)
         name = user.get("display_name") or user.get("employee_id", "")
