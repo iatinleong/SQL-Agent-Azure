@@ -29,7 +29,7 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-.block-container { padding-top: 1.8rem; padding-bottom: 4rem;
+.block-container { padding-top: 4.5rem; padding-bottom: 4rem;
                    padding-left: 3rem; padding-right: 3rem; }
 footer { visibility: hidden; }
 
