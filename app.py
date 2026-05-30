@@ -189,7 +189,6 @@ def _load_and_restore_session(session_id: str) -> None:
 def _render_sidebar(user: dict) -> None:
     """左側歷史對話欄（ChatGPT 風格，依日期分組）。"""
     from datetime import date as _date, timedelta as _td
-    from agent.session_store import load_sessions_list
 
     _today     = _date.today()
     _yesterday = _today - _td(days=1)
@@ -237,6 +236,7 @@ def _render_sidebar(user: dict) -> None:
             unsafe_allow_html=True,
         )
 
+        from agent.session_store import load_sessions_list
         sessions = load_sessions_list(user["employee_id"])
         if not sessions:
             st.markdown(
@@ -983,6 +983,10 @@ def _render_available_tables() -> None:
 
 def main():
     _init()
+
+    # 確保 sidebar DOM 存在（CSS 深色背景才能套用）
+    with st.sidebar:
+        pass
 
     # 自動從 URL query param 還原登入狀態（refresh 後 URL 不變，token 還在）
     if not st.session_state.get("current_user"):
