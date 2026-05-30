@@ -533,7 +533,7 @@ def generate(
     print(WIDE_SEP)
 
     # ── 整理注入內容摘要 ──────────────────────────────────────────
-    rel_pairs = _get_relationship_pairs(table_set=candidate_set)
+    rel_pairs = []  # relationship 注入暫停
 
     injected_summary = {
         "today": today,

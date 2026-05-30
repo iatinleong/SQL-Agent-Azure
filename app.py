@@ -130,9 +130,10 @@ class Turn:
     reasoning: str
     intent: str = "NEW_QUERY"
     modification: str = ""
-    phase1_log: str = ""   # 向量檢索
-    phase2_log: str = ""   # 報表需求確認
-    injected_log: str = ""
+    phase1_log: str = ""            # 向量檢索
+    phase2_injected_log: str = ""   # Phase 2 前的 prompt 注入（原始需求）
+    phase2_log: str = ""            # 報表需求確認
+    injected_log: str = ""          # Step A 前的 prompt 注入（確認後需求）
     step_a_log: str = ""
     step_b_log: str = ""
     step_c_log: list = field(default_factory=list)
@@ -588,7 +589,7 @@ def _start_new_query(prompt: str, guardrail_tokens: dict | None = None) -> None:
 def _confirm_and_generate(pending: dict) -> None:
     """使用者確認後執行 SQL 生成，寫入 Supabase，存入對話歷史，rerun。"""
     from agent.report_planner import fmt_plan_for_prompt, fmt_plan_for_user
-    from agent.config import CLASSIFICATION_MODEL, GENERATION_MODEL, get_model_pricing
+    from agent.config import GUARDRAIL_MODEL, PLAN_MODEL, GENERATION_MODEL, get_model_pricing
     from agent.generator import generate
 
     plan             = pending["plan"]
@@ -649,17 +650,18 @@ def _confirm_and_generate(pending: dict) -> None:
             st.markdown(gen.final_reasoning)
 
     # ── 費用計算 ──────────────────────────────────────────────────
-    clf_price_in, clf_price_out = get_model_pricing(CLASSIFICATION_MODEL)
     guardrail_tokens = pending["guardrail_tokens"]
     all_plan_tokens  = pending.get("all_plan_tokens", {})
+    g_price_in, g_price_out   = get_model_pricing(GUARDRAIL_MODEL)
+    p_price_in, p_price_out   = get_model_pricing(PLAN_MODEL)
 
     guardrail_cost = (
-        guardrail_tokens.get("guardrail_in", 0) / 1_000_000 * clf_price_in
-        + guardrail_tokens.get("guardrail_out", 0) / 1_000_000 * clf_price_out
+        guardrail_tokens.get("guardrail_in", 0) / 1_000_000 * g_price_in
+        + guardrail_tokens.get("guardrail_out", 0) / 1_000_000 * g_price_out
     )
     plan_cost = (
-        all_plan_tokens.get("plan_in", 0) / 1_000_000 * clf_price_in
-        + all_plan_tokens.get("plan_out", 0) / 1_000_000 * clf_price_out
+        all_plan_tokens.get("plan_in", 0) / 1_000_000 * p_price_in
+        + all_plan_tokens.get("plan_out", 0) / 1_000_000 * p_price_out
     )
     total_cost = guardrail_cost + plan_cost + gen.cost_usd
 
@@ -686,6 +688,7 @@ def _confirm_and_generate(pending: dict) -> None:
         reasoning=gen.final_reasoning,
         intent="NEW_QUERY",
         phase1_log=pending["phase1_log"],
+        phase2_injected_log=_fmt_phase2_injected(pending),
         phase2_log=report_plan_log,
         injected_log=_fmt_injected(gen.injected_summary),
         step_a_log=step_a_log,
@@ -736,7 +739,7 @@ def _confirm_and_generate(pending: dict) -> None:
 def _run_and_render_refiner(new_query: str, guardrail_tokens: dict | None = None) -> Turn | None:
     from agent.refiner import build_conversation_summary, classify_followup, refine
     from agent.schema_summarizer import load_table_summaries
-    from agent.config import CLASSIFICATION_MODEL, GENERATION_MODEL, get_model_pricing
+    from agent.config import GUARDRAIL_MODEL, REFINER_MODEL, GENERATION_MODEL, get_model_pricing
 
     conv          = st.session_state.conversation
     current_sql   = conv[-1].sql
@@ -746,7 +749,7 @@ def _run_and_render_refiner(new_query: str, guardrail_tokens: dict | None = None
     # Fast intent check (outside bordered container)
     _s = st.empty()
     _s.caption("⏳ 分析追問意圖…")
-    classification = classify_followup(current_sql, new_query, available, model=CLASSIFICATION_MODEL)
+    classification = classify_followup(current_sql, new_query, available, model=REFINER_MODEL)
     intent = classification.get("intent", "MODIFY_SQL")
     _s.empty()
 
@@ -788,7 +791,7 @@ def _run_and_render_refiner(new_query: str, guardrail_tokens: dict | None = None
     # ── 費用計算 ──────────────────────────────────────────────────
     guardrail_cost = 0.0
     if guardrail_tokens:
-        g_price_in, g_price_out = get_model_pricing(CLASSIFICATION_MODEL)
+        g_price_in, g_price_out = get_model_pricing(GUARDRAIL_MODEL)
         guardrail_cost = (
             guardrail_tokens.get("guardrail_in", 0) / 1_000_000 * g_price_in
             + guardrail_tokens.get("guardrail_out", 0) / 1_000_000 * g_price_out
@@ -1046,11 +1049,12 @@ def _render_turn(turn: Turn, idx: int):
 
         # Phase / Step logs
         log_sections = [
-            ("Phase 1：向量檢索", turn.phase1_log),
-            ("Phase 2：報表需求確認", turn.phase2_log),
-            ("Prompt 注入內容", turn.injected_log),
-            ("Step A：草稿生成", turn.step_a_log),
-            ("Step B：驗證", turn.step_c_log),
+            ("Phase 1：向量檢索",          turn.phase1_log),
+            ("Phase 2 Prompt 注入內容",    turn.phase2_injected_log),
+            ("Phase 2：報表需求確認",      turn.phase2_log),
+            ("Step A Prompt 注入內容",     turn.injected_log),
+            ("Step A：草稿生成",           turn.step_a_log),
+            ("Step B：驗證",               turn.step_c_log),
         ]
         for label, log in log_sections:
             if label == "Step B：驗證":
