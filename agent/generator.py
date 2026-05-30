@@ -412,7 +412,7 @@ def generate(
     scene: str = "",
     report_plan_text: str = "",
     extra_context: str = "",
-    user_profile: str = "",
+    user_profile: list[dict] | None = None,
 ) -> GenerationResult:
     """完整生成流程：Step A（草稿）→ Step B（全套驗證 + 自動修正）。
     extra_context：Q&A 確認後的最終需求補充文字，與原始 requirement union 做 metrics/skills 提取。
@@ -496,6 +496,12 @@ def generate(
 
     from datetime import date as _date
     today = _date.today().strftime("%Y/%m/%d")
+    from .user_profile import select_rules, format_rules_text
+    _all_rules = user_profile or []
+    _query_for_profile = " ".join(filter(None, [requirement, extra_context]))
+    _matched_rules = select_rules(_query_for_profile, _all_rules)
+    profile_text = format_rules_text(_matched_rules)
+
     cases_text = _build_cases_text(hits, all_cases)
     step_a_sql, step_a_reasoning, a_in, a_out = _step_a(
         requirement, step_a_schema, rels_text, metrics_text, model,
@@ -504,7 +510,7 @@ def generate(
         today=today,
         report_plan_text=report_plan_text,
         cases_text=cases_text,
-        user_profile=user_profile,
+        user_profile=profile_text,
     )
     print(f"  tokens：in={a_in}  out={a_out}")
     print(f"\n{step_a_sql[:400]}{'...' if len(step_a_sql) > 400 else ''}")
@@ -551,7 +557,8 @@ def generate(
         "skills_orig":   [s["name"] for s in skills_orig],
         "skills_new":    [s["name"] for s in skills_new_list],
         "relationships": rel_pairs,
-        "user_profile":  user_profile.strip(),
+        "user_profile":  profile_text,
+        "user_profile_matched": [r.get("name") for r in _matched_rules],
     }
 
     price_in, price_out = get_model_pricing(model)

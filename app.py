@@ -370,14 +370,15 @@ def _fmt_injected(summary: dict) -> str:
         for a, b in summary["relationships"]:
             lines.append(f"- {a} ↔ {b}")
 
-    profile_text = summary.get("user_profile", "")
-    lines.append(f"\n**個人化注意事項（來自歷史對話）：**")
+    matched_names = summary.get("user_profile_matched", [])
+    profile_text  = summary.get("user_profile", "")
+    lines.append(f"\n**個人化報表知識（命中 {len(matched_names)} 條）：**")
     if profile_text.strip():
         for row in profile_text.splitlines():
             if row.strip():
-                lines.append(row if row.startswith("-") else f"- {row}")
+                lines.append(f"- {row.strip()}")
     else:
-        lines.append("_（尚無記錄，首次 Q&A 修正後自動建立）_")
+        lines.append("_（尚無記錄，或本次查詢未命中任何條目）_")
 
     return "\n".join(lines) if lines else "（無額外注入）"
 
@@ -420,15 +421,16 @@ def _fmt_phase2_injected(pending: dict) -> str:
         names = re.findall(r"▸ \[([^\]]+)\]", skills_text)
         lines.append(f"**觸發 Business Skills（{len(names)} 條）：** {', '.join(names) if names else '—'}")
 
-    # ── 個人化注意事項 ─────────────────────────────────────────────
-    profile = pending.get("user_profile", "")
-    lines.append(f"\n**個人化注意事項（來自歷史對話）：**")
-    if profile.strip():
-        for row in profile.strip().splitlines():
-            if row.strip():
-                lines.append(row if row.startswith("-") else f"- {row}")
+    # ── 個人化報表知識 ─────────────────────────────────────────────
+    from agent.user_profile import select_rules, format_rules_text
+    _rules = pending.get("user_profile", [])
+    _matched = select_rules(pending.get("req", ""), _rules)
+    lines.append(f"\n**個人化報表知識（命中 {len(_matched)} 條）：**")
+    if _matched:
+        for r in _matched:
+            lines.append(f"- **{r.get('name','')}**：{r.get('note','')}")
     else:
-        lines.append("_（尚無記錄，首次 Q&A 修正後自動建立）_")
+        lines.append("_（尚無記錄，或本次查詢未命中任何條目）_")
 
     return "\n".join(lines) if lines else "（無額外注入）"
 
@@ -713,7 +715,7 @@ def _confirm_and_generate(pending: dict) -> None:
         _corrections = [item["a"] for item in _qa if item.get("a")]
         new_profile = update_profile(
             employee_id=_emp,
-            current_profile=pending.get("user_profile", ""),
+            current_rules=pending.get("user_profile", []),
             requirement=pending["req"],
             qa_history=_qa,
             understanding=plan.understanding or "",
@@ -834,7 +836,7 @@ def _run_and_render_refiner(new_query: str, guardrail_tokens: dict | None = None
             from agent.user_profile import update_profile
             new_profile = update_profile(
                 employee_id=_emp,
-                current_profile=st.session_state.get("user_profile", ""),
+                current_rules=st.session_state.get("user_profile", []),
                 requirement=new_query,
                 qa_history=[],
                 understanding="",

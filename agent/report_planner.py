@@ -36,7 +36,7 @@ def plan_report(
     schema_text: str = "",
     metrics_text: str = "",
     skills_text: str = "",
-    user_profile: str = "",
+    user_profile: list[dict] | None = None,
     model: str = PLAN_MODEL,
 ) -> ReportPlan:
     """
@@ -67,9 +67,12 @@ def plan_report(
     if skills_text.strip():
         skills_block = f"\n\n【參考資料 5：業務邏輯規則】\n以下是與本次需求相關的業務邏輯，用於判斷篩選條件、計算方式是否有歧義需要釐清。\n{skills_text.strip()}"
 
+    from .user_profile import select_rules, format_rules_text
+    _matched = select_rules(requirement, user_profile or [])
+    _profile_text = format_rules_text(_matched)
     profile_block = ""
-    if user_profile.strip():
-        profile_block = f"\n\n【參考資料 6：使用者個人化習慣（來自歷史對話）】\n以下是此使用者過去查詢習慣的整理，已確認的偏好可直接採用，不必再詢問。\n{user_profile.strip()}"
+    if _profile_text:
+        profile_block = f"\n\n【參考資料 6：個人化報表知識（來自歷史查詢）】\n以下是此使用者過去針對類似報表累積的知識，已確認的作法可直接採用，不必再詢問。\n{_profile_text}"
 
     prompt = f"""\
 今日日期：{today}
