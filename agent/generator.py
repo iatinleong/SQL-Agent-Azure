@@ -119,15 +119,27 @@ def _load_schema_for_tables(table_names: list[str]) -> str:
 
 # ── Metrics 載入 ──────────────────────────────────────────────────
 
-def _load_metrics_text() -> str:
-    """載入 metrics.json 並格式化為 prompt 用文字。"""
+def _load_metrics_text(query: str = "") -> str:
+    """載入 metrics.json，依 trigger_keywords routing 只注入命中的指標。
+    完全沒命中時 fallback 全量注入。
+    """
     if not METRICS_PATH.exists():
         return ""
     with open(METRICS_PATH, encoding="utf-8") as f:
         metrics = json.load(f)
 
+    if query:
+        q = query.lower()
+        matched = [
+            m for m in metrics
+            if any(kw.lower() in q for kw in m.get("trigger_keywords", []))
+        ]
+        selected = matched if matched else metrics
+    else:
+        selected = metrics
+
     lines = ["【業務指標計算規則】"]
-    for m in metrics:
+    for m in selected:
         name = m.get("name", "")
         expr = m.get("expression", "")
         instr = m.get("llm_instruction", "")
@@ -276,9 +288,10 @@ def _build_cases_text(
             f"{sql_text}"
         )
     header = (
-        "【參考案例 SQL】\n"
-        "以下案例由語義相似度檢索得出，供了解欄位命名風格與 SQL 結構參考，不代表邏輯正確。請以本次提供的表格定義、指標規則、業務邏輯為準。"
-    )
+      "【參考案例 SQL】\n"
+      "以下案例由語義相似度檢索得出，供了解欄位命名風格與 SQL 結構參考，"
+      "不代表邏輯正確。請以本次提供的表格定義、指標規則、業務邏輯為準。"
+  )
     return header + "\n\n" + "\n\n".join(blocks)
 
 
@@ -428,7 +441,7 @@ def generate(
     candidate_tables = sorted(candidate_set)
 
     rels_text = _load_relationships_text(table_set=candidate_set)
-    metrics_text = _load_metrics_text()
+    metrics_text = _load_metrics_text(requirement)
     skills_text = _load_business_skills_text(requirement, scene)
     step_a_schema = _load_schema_for_tables(candidate_tables)
 
@@ -439,7 +452,10 @@ def generate(
     print(f"=== Step A：候選池草稿生成（模型：{model}，注入 {len(hits)} 筆參考案例）===")
     print(f"  候選表格（{len(candidate_tables)} 張）：{', '.join(candidate_tables)}")
     print(f"  注入 relationships：{rel_count} 條（已依候選池過濾）")
-    print(f"  注入 metrics：全部 {len([l for l in metrics_text.splitlines() if l.startswith('▸')])} 條")
+    _m_count = len([l for l in metrics_text.splitlines() if l.startswith("▸")])
+    _m_total = sum(1 for _ in open(METRICS_PATH, encoding="utf-8") if '"name"' in _)
+    _m_mode = "routing" if _m_count < _m_total else "fallback 全量"
+    print(f"  注入 metrics：{_m_count}/{_m_total} 條（{_m_mode}）")
     if skills_count:
         print(f"  注入 business_skills：{skills_count} 條（場景={scene or '—'}）")
 

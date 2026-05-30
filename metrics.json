@@ -1,6 +1,7 @@
 [
   {
     "name": "交易金額加總",
+    "trigger_keywords": ["交易金額", "成交金額", "交易量", "成交量", "txn_amt_twd", "買賣成交"],
     "expression": "SUM(txn_amt_twd)",
     "source_options": [
       {
@@ -18,6 +19,7 @@
   },
   {
     "name": "毛收入（貢獻度）",
+    "trigger_keywords": ["貢獻度", "毛收入", "貢獻", "rev_amt_twd", "手續費", "業績貢獻", "收入"],
     "expression": "SUM(rev_amt_twd)",
     "source_options": [
       {
@@ -30,6 +32,7 @@
   },
   {
     "name": "月均交易量",
+    "trigger_keywords": ["月均", "月平均交易", "月均成交", "月均交易"],
     "expression": "SUM(txn_amt_twd) / 月份數",
     "source_options": [
       {
@@ -41,7 +44,21 @@
     "llm_instruction": "月均交易量 = SUM(txn_amt_twd) / N，N 為觀察月份數（通常為 12 或需求指定的月數）。分母應為固定月份數（觀察期長度），而非客戶實際有交易的月份數，除非需求另有說明。"
   },
   {
+    "name": "市佔率",
+    "trigger_keywords": ["市佔率", "市占率", "market share", "bps", "市場佔有率", "市佔"],
+    "expression": "SUM(txn_amt_twd) / SUM(market_stock_txns)",
+    "source_options": [
+      {
+        "table": "M_AC_ACCOUNT_REVENUE（分子）+ M_RF_MARKET_SHARE（分母）",
+        "time_column": "snap_yyyymm / snap_date",
+        "note": "分子：公司客戶交易金額；分母：全市場現貨成交量。兩表透過 snap_date 對齊時間範圍，通常用子查詢或 CROSS JOIN 取 M_RF_MARKET_SHARE 的加總後再與分子計算"
+      }
+    ],
+    "llm_instruction": "計算市佔率 = SUM(txn_amt_twd) / SUM(market_stock_txns)，兩者必須對齊相同時間範圍。標準寫法：先用子查詢對 M_RF_MARKET_SHARE 在相同 snap_date 範圍內取 SUM(market_stock_txns) 作為純量，再與分子相除；或用 CROSS JOIN 將市場總量帶入每一列。M_RF_MARKET_SHARE 沒有帳號維度，不能直接 JOIN 業務表的帳號欄，通常透過日期（snap_date / snap_yyyymm）對齊時間"
+  },
+  {
     "name": "市場成交量（市佔率分母）",
+    "trigger_keywords": ["市佔率", "市占率", "market share", "bps", "全市場成交", "市場成交量", "market_stock_txns"],
     "expression": "SUM(market_stock_txns)",
     "source_options": [
       {
@@ -54,6 +71,7 @@
   },
   {
     "name": "不重複客戶數",
+    "trigger_keywords": ["客戶數", "不重複客戶", "party_id_mask", "自然人數", "幾位客戶", "人數"],
     "expression": "COUNT(DISTINCT party_id_mask)",
     "source_options": [
       {
@@ -65,6 +83,7 @@
   },
   {
     "name": "不重複帳戶數",
+    "trigger_keywords": ["帳戶數", "開戶數", "帳號數", "有效戶數", "acct_nbr"],
     "expression": "COUNT(DISTINCT acct_nbr)",
     "source_options": [
       {
@@ -76,6 +95,7 @@
   },
   {
     "name": "最後交易日",
+    "trigger_keywords": ["最後交易日", "最近交易日", "last_txn_date", "最後交易時間", "最近交易"],
     "expression": "MAX(last_txn_date)",
     "source_options": [
       {
@@ -88,6 +108,7 @@
   },
   {
     "name": "最早交易日",
+    "trigger_keywords": ["最早交易日", "首次交易日", "第一次交易", "初次交易", "最早成交"],
     "expression": "MIN(txn_date)",
     "source_options": [
       {
@@ -100,6 +121,7 @@
   },
   {
     "name": "持倉市值／總資產",
+    "trigger_keywords": ["持倉市值", "總資產", "資產市值", "bal_amt_twd", "me_asset_amt", "庫存市值", "市值"],
     "expression": "me_asset_amt_twd 或 SUM(bal_amt_twd)",
     "source_options": [
       {
@@ -115,6 +137,7 @@
   },
   {
     "name": "條件式加總與計數（CASE WHEN）",
+    "trigger_keywords": ["分月統計", "各月分欄", "條件加總", "按商品分列", "分欄顯示", "CASE WHEN"],
     "expression": "SUM(CASE WHEN 條件 THEN 值 ELSE 0 END) / COUNT(CASE WHEN 條件 THEN 1 END)",
     "source_options": [
       {
@@ -126,6 +149,7 @@
   },
   {
     "name": "月份轉欄（PIVOT）",
+    "trigger_keywords": ["PIVOT", "月份轉欄", "月份橫排", "轉欄", "pivot"],
     "expression": "PIVOT (MAX(txn_amt_twd) FOR snap_yyyymm IN ('202501' AS jan, ...))",
     "source_options": [
       {
@@ -137,6 +161,7 @@
   },
   {
     "name": "排名與去重（ROW_NUMBER / RANK）",
+    "trigger_keywords": ["排名", "前N大", "前10", "前5", "去重", "取最近", "ROW_NUMBER", "RANK", "名次", "排行"],
     "expression": "ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...) / RANK() OVER (...)",
     "source_options": [
       {
