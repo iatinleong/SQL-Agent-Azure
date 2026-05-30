@@ -134,6 +134,7 @@ class Turn:
     phase2_injected_log: str = ""   # Phase 2 前的 prompt 注入（原始需求）
     phase2_log: str = ""            # 報表需求確認
     injected_log: str = ""          # Step A 前的 prompt 注入（確認後需求）
+    step_a_sql: str = ""
     step_a_log: str = ""
     step_b_log: str = ""
     step_c_log: list = field(default_factory=list)
@@ -635,6 +636,7 @@ def _confirm_and_generate(pending: dict) -> None:
         all_ok = all(e.get("passed", True) for e in step_c_log)
         label = f"Step B：驗證　{'✅ 通過' if all_ok else '❌ 有問題'}"
         with st.expander(label, expanded=not all_ok):
+            st.code(_clean_sql(gen.step_a_sql), language="sql")
             for entry in step_c_log:
                 if entry.get("passed"):
                     st.success(f"Round {entry.get('round', '?')}：驗證通過")
@@ -691,6 +693,7 @@ def _confirm_and_generate(pending: dict) -> None:
         phase2_injected_log=_fmt_phase2_injected(pending),
         phase2_log=report_plan_log,
         injected_log=_fmt_injected(gen.injected_summary),
+        step_a_sql=gen.step_a_sql,
         step_a_log=step_a_log,
         step_c_log=gen.step_c_log,
         cost_usd=total_cost,
@@ -1062,6 +1065,8 @@ def _render_turn(turn: Turn, idx: int):
                     all_ok = all(e.get("passed", True) for e in log)
                     icon = "✅" if all_ok else "❌"
                     with st.expander(f"{label}　{icon}", expanded=False):
+                        if turn.step_a_sql:
+                            st.code(_clean_sql(turn.step_a_sql), language="sql")
                         for entry in log:
                             if entry.get("passed"):
                                 st.success(f"Round {entry.get('round', '?')}：驗證通過")
