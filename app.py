@@ -368,11 +368,14 @@ def _fmt_injected(summary: dict) -> str:
         for a, b in summary["relationships"]:
             lines.append(f"- {a} ↔ {b}")
 
-    if summary.get("user_profile"):
-        lines.append(f"\n**個人化注意事項（來自歷史對話）：**")
-        for row in summary["user_profile"].splitlines():
+    profile_text = summary.get("user_profile", "")
+    lines.append(f"\n**個人化注意事項（來自歷史對話）：**")
+    if profile_text.strip():
+        for row in profile_text.splitlines():
             if row.strip():
                 lines.append(row if row.startswith("-") else f"- {row}")
+    else:
+        lines.append("_（尚無記錄，首次 Q&A 修正後自動建立）_")
 
     return "\n".join(lines) if lines else "（無額外注入）"
 
@@ -417,11 +420,13 @@ def _fmt_phase2_injected(pending: dict) -> str:
 
     # ── 個人化注意事項 ─────────────────────────────────────────────
     profile = pending.get("user_profile", "")
+    lines.append(f"\n**個人化注意事項（來自歷史對話）：**")
     if profile.strip():
-        lines.append(f"\n**個人化注意事項（來自歷史對話）：**")
         for row in profile.strip().splitlines():
             if row.strip():
                 lines.append(row if row.startswith("-") else f"- {row}")
+    else:
+        lines.append("_（尚無記錄，首次 Q&A 修正後自動建立）_")
 
     return "\n".join(lines) if lines else "（無額外注入）"
 
