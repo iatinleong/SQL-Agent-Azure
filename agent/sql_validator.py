@@ -78,6 +78,10 @@ def _check_oracle_quirks(sql: str) -> list[str]:
     for select_node in tree.find_all(exp.Select):
         if select_node.args.get("from"):
             continue
+        # sqlglot 在某些結構（CTE + FETCH FIRST、視窗函數）下，from arg 可能未填入，
+        # 但只要 SELECT 有欄位引用就代表一定有資料來源，不需 FROM DUAL。
+        if select_node.find(exp.Column):
+            continue
 
         cte_name = ""
         node = select_node.parent
@@ -194,6 +198,17 @@ def check_hallucination(sql: str) -> list[str]:
         cte.alias_or_name.upper() for cte in tree.find_all(exp.CTE)
     }
 
+    # 收集 CTE 輸出的欄位別名（如 ROW_NUMBER() OVER (...) AS RN）
+    cte_col_aliases: set[str] = set()
+    for cte in tree.find_all(exp.CTE):
+        body = cte.this
+        if isinstance(body, exp.Subquery):
+            body = body.this
+        if isinstance(body, exp.Select):
+            for expr in body.expressions:
+                if isinstance(expr, exp.Alias):
+                    cte_col_aliases.add(expr.alias.upper())
+
     # 2. 建立 alias → 正規化表格名 的對照表
     alias_map: dict[str, str] = {}
     for tnode in tree.find_all(exp.Table):
@@ -262,7 +277,7 @@ def check_hallucination(sql: str) -> list[str]:
                 continue
             if col_name in cte_names:
                 continue
-            if col_name not in all_query_cols and col_name not in seen_unqualified_errors:
+            if col_name not in all_query_cols and col_name not in cte_col_aliases and col_name not in seen_unqualified_errors:
                 seen_unqualified_errors.add(col_name)
                 errors.append(
                     f"[幻覺] 欄位不存在於查詢中任何表格：{col_name}"
