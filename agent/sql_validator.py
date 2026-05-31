@@ -79,8 +79,10 @@ def _check_oracle_quirks(sql: str) -> list[str]:
         if select_node.args.get("from"):
             continue
         # sqlglot 在某些結構（CTE + FETCH FIRST、視窗函數）下，from arg 可能未填入，
-        # 但只要 SELECT 有欄位引用就代表一定有資料來源，不需 FROM DUAL。
-        if select_node.find(exp.Column):
+        # 只要 SELECT 含欄位引用、聚合函數或視窗函數，就一定有資料來源，不需 FROM DUAL。
+        if (select_node.find(exp.Column)
+                or select_node.find(exp.AggFunc)
+                or select_node.find(exp.Window)):
             continue
 
         cte_name = ""
@@ -220,7 +222,10 @@ def check_hallucination(sql: str) -> list[str]:
             continue
         alias = (tnode.alias or "").upper()
         if alias:
-            alias_map[alias] = normalized
+            if alias in alias_map and alias_map[alias] != normalized:
+                alias_map[alias] = ""  # 同一 alias 在不同 CTE 中指不同表，標記為不明確
+            else:
+                alias_map[alias] = normalized
         alias_map[raw_name.upper()] = normalized
         alias_map[normalized] = normalized
 
