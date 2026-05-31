@@ -1218,13 +1218,6 @@ def main():
                         "**根據你的需求與相似案例，系統理解這份報表應呈現如下，請確認是否正確：**"
                     )
                     st.markdown(fmt_plan_for_user(plan))
-                    _tech_tables = pending.get("phase2_tables", [])
-                    if _tech_tables:
-                        with st.expander("📋 技術資訊（資料來源）", expanded=False):
-                            st.markdown(f"**候選表格：** {', '.join(_tech_tables)}")
-                            _schema_text = pending.get("schema_for_plan", "")
-                            if _schema_text:
-                                st.code(_schema_text, language="")
                     st.markdown("---")
 
                     with st.form("plan_confirm_form", clear_on_submit=True):
