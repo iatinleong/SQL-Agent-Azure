@@ -16,6 +16,7 @@ class ReportPlan:
     granularity: str = "其他"       # 帳戶/客戶/營業員/分公司/其他
     granularity_detail: str = ""    # 每列代表什麼（白話）
     understanding: str = ""         # status="confirm" 時，LLM 對整份報表需求的完整理解摘要
+    tables: list = field(default_factory=list)  # status="confirm" 時，LLM 從 schema 選出實際需要的表格
     tokens: dict = field(default_factory=dict)
 
 
@@ -103,7 +104,8 @@ def plan_report(
   "question": "若 status=ask：一個最關鍵的問題，用業務員聽得懂的話問；否則空字串",
   "granularity": "帳戶|客戶|營業員|分公司|其他",
   "granularity_detail": "每一列代表什麼，用業務員聽得懂的話說明，50字以內",
-  "understanding": "若 status=confirm：用業務員聽得懂的白話說明這份報表要呈現什麼，包含時間範圍、篩選條件、排列方式、每列代表什麼；絕對不可出現任何資料表名稱、欄位英文名稱或任何技術術語；否則空字串"
+  "understanding": "若 status=confirm：用業務員聽得懂的白話說明這份報表要呈現什麼，包含時間範圍、篩選條件、排列方式、每列代表什麼；絕對不可出現任何資料表名稱、欄位英文名稱或任何技術術語；否則空字串",
+  "tables": "若 status=confirm：從【參考資料 3：可用欄位定義】中，選出這份報表實際需要的表格英文名稱清單，例如 ['M_AC_ACCOUNT', 'M_AT_STOCK_TXN']；否則空陣列 []"
 }}"""
 
     resp = _chat(
@@ -129,12 +131,16 @@ def plan_report(
     except json.JSONDecodeError:
         d = {}
 
+    raw_tables = d.get("tables", [])
+    tables = [t.upper() for t in raw_tables if isinstance(t, str)] if isinstance(raw_tables, list) else []
+
     return ReportPlan(
         status=d.get("status", "confirm"),
         question=d.get("question", ""),
         granularity=d.get("granularity", "其他"),
         granularity_detail=d.get("granularity_detail", ""),
         understanding=d.get("understanding", ""),
+        tables=tables,
         tokens=tokens,
     )
 

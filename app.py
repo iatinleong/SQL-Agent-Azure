@@ -622,6 +622,7 @@ def _confirm_and_generate(pending: dict) -> None:
         report_plan_text=report_plan_text,
         extra_context=_extra_context,
         user_profile=pending.get("user_profile", ""),
+        forced_tables=plan.tables if plan.tables else None,
     )
 
     step_a_log = (
@@ -1218,6 +1219,8 @@ def main():
                         "**根據你的需求與相似案例，系統理解這份報表應呈現如下，請確認是否正確：**"
                     )
                     st.markdown(fmt_plan_for_user(plan))
+                    if plan.tables:
+                        st.caption(f"資料來源：{', '.join(plan.tables)}")
                     st.markdown("---")
 
                     with st.form("plan_confirm_form", clear_on_submit=True):

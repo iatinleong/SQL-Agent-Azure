@@ -418,6 +418,7 @@ def generate(
     report_plan_text: str = "",
     extra_context: str = "",
     user_profile: list[dict] | None = None,
+    forced_tables: list[str] | None = None,
 ) -> GenerationResult:
     """完整生成流程：Step A（草稿）→ Step B（全套驗證 + 自動修正）。
     extra_context：Q&A 確認後的最終需求補充文字，與原始 requirement union 做 metrics/skills 提取。
@@ -447,23 +448,34 @@ def generate(
         if extraction.codes:
             print(f"  WHERE 提示：{extraction.codes}")
 
-    # ── 候選池：case union ∪ table embedding 檢索（兩次）∪ entity extra_tables ──
-    candidate_tables = _get_union_tables(hits, all_cases, available)
-    candidate_set = set(candidate_tables)
-
-    semantic_a = retrieve_tables(requirement, top_n=5)
-    semantic_b = retrieve_tables(extra_context, top_n=5) if extra_context else []
-    semantic_tables = list(dict.fromkeys(semantic_a + semantic_b))
-    new_from_semantic = [t for t in semantic_tables if t in available and t not in candidate_set]
-    if new_from_semantic:
+    # ── 候選池：Phase 2 精煉（若有）或 case union ∪ embedding ∪ entity ──
+    if forced_tables:
+        # Phase 2 report_planner 已選出實際需要的表格，直接使用
+        candidate_set = {t for t in forced_tables if t in available}
+        # entity extra_tables 仍補入（商品/概念路由結果不應被捨棄）
+        for t in extraction.extra_tables:
+            if t in available:
+                candidate_set.add(t)
+        candidate_tables = sorted(candidate_set)
         print(f"\n{SEP}")
-        print(f"=== 表格語意檢索（新增）：{', '.join(new_from_semantic)} ===")
-    candidate_set.update(t for t in semantic_tables if t in available)
+        print(f"=== 候選池（Phase 2 精煉）：{', '.join(candidate_tables)} ===")
+    else:
+        candidate_tables = _get_union_tables(hits, all_cases, available)
+        candidate_set = set(candidate_tables)
 
-    for t in extraction.extra_tables:
-        if t in available:
-            candidate_set.add(t)
-    candidate_tables = sorted(candidate_set)
+        semantic_a = retrieve_tables(requirement, top_n=5)
+        semantic_b = retrieve_tables(extra_context, top_n=5) if extra_context else []
+        semantic_tables = list(dict.fromkeys(semantic_a + semantic_b))
+        new_from_semantic = [t for t in semantic_tables if t in available and t not in candidate_set]
+        if new_from_semantic:
+            print(f"\n{SEP}")
+            print(f"=== 表格語意檢索（新增）：{', '.join(new_from_semantic)} ===")
+        candidate_set.update(t for t in semantic_tables if t in available)
+
+        for t in extraction.extra_tables:
+            if t in available:
+                candidate_set.add(t)
+        candidate_tables = sorted(candidate_set)
 
     rels_text = _load_relationships_text(table_set=set(candidate_tables))
 
