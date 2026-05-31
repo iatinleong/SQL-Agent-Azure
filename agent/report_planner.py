@@ -103,7 +103,7 @@ def plan_report(
   "question": "若 status=ask：一個最關鍵的問題，用業務員聽得懂的話問；否則空字串",
   "granularity": "帳戶|客戶|營業員|分公司|其他",
   "granularity_detail": "每一列代表什麼，用業務員聽得懂的話說明，50字以內",
-  "understanding": "若 status=confirm：用業務員聽得懂的白話說明這份報表要呈現什麼，包含時間範圍、篩選條件、排列方式、每列代表什麼；否則空字串"
+  "understanding": "若 status=confirm：條列式摘要（時間範圍、篩選條件、欄位說明、每列代表什麼），每項30字以內；否則空字串"
 }}"""
 
     resp = _chat(
