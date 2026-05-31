@@ -103,7 +103,7 @@ def plan_report(
   "question": "若 status=ask：一個最關鍵的問題，用業務員聽得懂的話問；否則空字串",
   "granularity": "帳戶|客戶|營業員|分公司|其他",
   "granularity_detail": "每一列代表什麼，用業務員聽得懂的話說明，50字以內",
-  "understanding": "若 status=confirm：用業務員聽得懂的白話說明這份報表要呈現什麼，包含時間範圍、篩選條件、排列方式、每列代表什麼；可同時標注對應的英文資料表名稱（TABLE_NAME）與關鍵欄位（COLUMN_NAME）；否則空字串"
+  "understanding": "若 status=confirm：用業務員聽得懂的白話說明這份報表要呈現什麼，包含時間範圍、篩選條件、排列方式、每列代表什麼；提及資料來源時一律以「中文業務名稱（英文表格名稱）」格式標注，例如「帳戶主檔（M_AC_ACCOUNT）」、「台股交易明細（M_AT_STOCK_TXN）」；否則空字串"
 }}"""
 
     resp = _chat(
