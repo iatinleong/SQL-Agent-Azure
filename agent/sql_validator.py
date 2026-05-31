@@ -316,9 +316,46 @@ def validate_sql(sql: str) -> list[str]:
     return _collect_all_errors(_clean(sql))
 
 
+# ── Schema hint（幻覺修正用）─────────────────────────────────────────
+
+def _build_schema_hint(sql: str) -> str:
+    """從 SQL 中提取實際使用的表格，回傳欄位清單供 LLM 修正幻覺時參考。"""
+    try:
+        import sqlglot
+        from sqlglot import exp
+        tree = sqlglot.parse_one(sql, dialect="oracle")
+    except Exception:
+        return ""
+
+    schema_lookup = _load_schema_lookup()
+    cte_names: set[str] = {cte.alias_or_name.upper() for cte in tree.find_all(exp.CTE)}
+
+    used_tables: set[str] = set()
+    for tnode in tree.find_all(exp.Table):
+        raw_name = tnode.name or ""
+        if not raw_name:
+            continue
+        normalized = _normalize_table(tnode.db or "", raw_name)
+        if normalized in cte_names or raw_name.upper() in cte_names:
+            continue
+        if raw_name.upper() in _ORACLE_SYSTEM_TABLES:
+            continue
+        if normalized in schema_lookup:
+            used_tables.add(normalized)
+
+    if not used_tables:
+        return ""
+
+    lines = []
+    for tname in sorted(used_tables):
+        cols = ", ".join(sorted(schema_lookup[tname]))
+        lines.append(f"{tname}：{cols}")
+    return "\n".join(lines)
+
+
 # ── LLM 修正 ───────────────────────────────────────────────────────
 
-def _fix_with_llm(sql: str, errors: list[str], model: str) -> tuple[str, dict]:
+def _fix_with_llm(sql: str, errors: list[str], model: str, schema_hint: str = "") -> tuple[str, dict]:
     from .generator import _chat
 
     error_text = "\n".join(errors)
@@ -342,7 +379,8 @@ def _fix_with_llm(sql: str, errors: list[str], model: str) -> tuple[str, dict]:
                 "role": "user",
                 "content": (
                     f"【錯誤訊息】\n{error_text}\n\n"
-                    f"【原始 SQL】\n{sql}"
+                    + (f"【可用欄位定義（每行：表格名稱：欄位清單）】\n{schema_hint}\n\n" if schema_hint else "")
+                    + f"【原始 SQL】\n{sql}"
                 ),
             },
         ],
@@ -384,7 +422,9 @@ def validate_and_fix(
         if passed:
             break
 
-        sql, tokens = _fix_with_llm(sql, errors, model)
+        has_hallucination = any(e.startswith("[幻覺]") for e in errors)
+        schema_hint = _build_schema_hint(sql) if has_hallucination else ""
+        sql, tokens = _fix_with_llm(sql, errors, model, schema_hint=schema_hint)
         for k, v in tokens.items():
             total_tokens[k] = total_tokens.get(k, 0) + v
 
