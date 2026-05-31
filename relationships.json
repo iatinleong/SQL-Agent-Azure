@@ -398,5 +398,605 @@
     "cases": [],
     "join_note": "複合 JOIN key：避免不同商品帳號（台股/複委託/期貨）造成資料膨脹",
     "inferred": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT",
+    "table_b": "M_PT_SALES",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT.EMP_NBR = M_PT_SALES.EMP_NBR AND M_AC_ACCOUNT.PARTY_ID_MASK = M_PT_SALES.PARTY_ID_MASK",
+    "case_count": 99,
+    "raw_frequency": 99,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_REVENUE",
+    "table_b": "M_AT_STOCK_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_REVENUE.ACCT_NBR = M_AT_STOCK_TXN.ACCT_NBR AND M_AC_ACCOUNT_REVENUE.PROD_TYPE_CODE = M_AT_STOCK_TXN.PROD_TYPE_CODE",
+    "case_count": 94,
+    "raw_frequency": 94,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_REVENUE",
+    "table_b": "M_PT_SALES",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_REVENUE.PARTY_ID_MASK = M_PT_SALES.PARTY_ID_MASK",
+    "case_count": 84,
+    "raw_frequency": 84,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_REVENUE",
+    "table_b": "M_AT_ACCOUNT_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_REVENUE.ACCT_NBR = M_AT_ACCOUNT_TXN.ACCT_NBR AND M_AC_ACCOUNT_REVENUE.PROD_TYPE_CODE = M_AT_ACCOUNT_TXN.PROD_TYPE_CODE",
+    "case_count": 82,
+    "raw_frequency": 82,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT",
+    "table_b": "M_RF_MARKET_SHARE",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT.OPEN_DATE = M_RF_MARKET_SHARE.SNAP_DATE",
+    "case_count": 60,
+    "raw_frequency": 60,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AT_BOND_TXN",
+    "table_b": "M_AT_STOCK_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AT_BOND_TXN.ACCT_NBR = M_AT_STOCK_TXN.ACCT_NBR AND M_AT_BOND_TXN.PROD_TYPE_CODE = M_AT_STOCK_TXN.PROD_TYPE_CODE",
+    "case_count": 60,
+    "raw_frequency": 60,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AT_SN_TXN",
+    "table_b": "M_AT_STOCK_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AT_SN_TXN.ACCT_NBR = M_AT_STOCK_TXN.ACCT_NBR AND M_AT_SN_TXN.PROD_TYPE_CODE = M_AT_STOCK_TXN.PROD_TYPE_CODE",
+    "case_count": 60,
+    "raw_frequency": 60,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AT_INSURANCE_TXN",
+    "table_b": "M_AT_STOCK_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AT_INSURANCE_TXN.ACCT_NBR = M_AT_STOCK_TXN.ACCT_NBR AND M_AT_INSURANCE_TXN.PROD_TYPE_CODE = M_AT_STOCK_TXN.PROD_TYPE_CODE",
+    "case_count": 60,
+    "raw_frequency": 60,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AT_FUND_TXN",
+    "table_b": "M_AT_STOCK_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AT_FUND_TXN.ACCT_NBR = M_AT_STOCK_TXN.ACCT_NBR AND M_AT_FUND_TXN.PROD_TYPE_CODE = M_AT_STOCK_TXN.PROD_TYPE_CODE",
+    "case_count": 60,
+    "raw_frequency": 60,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AT_BOND_TXN",
+    "table_b": "M_AT_SN_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AT_BOND_TXN.ACCT_NBR = M_AT_SN_TXN.ACCT_NBR AND M_AT_BOND_TXN.PROD_TYPE_CODE = M_AT_SN_TXN.PROD_TYPE_CODE",
+    "case_count": 60,
+    "raw_frequency": 60,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AT_BOND_TXN",
+    "table_b": "M_AT_INSURANCE_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AT_BOND_TXN.ACCT_NBR = M_AT_INSURANCE_TXN.ACCT_NBR AND M_AT_BOND_TXN.PROD_TYPE_CODE = M_AT_INSURANCE_TXN.PROD_TYPE_CODE",
+    "case_count": 60,
+    "raw_frequency": 60,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AT_BOND_TXN",
+    "table_b": "M_AT_FUND_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AT_BOND_TXN.ACCT_NBR = M_AT_FUND_TXN.ACCT_NBR AND M_AT_BOND_TXN.PROD_TYPE_CODE = M_AT_FUND_TXN.PROD_TYPE_CODE",
+    "case_count": 60,
+    "raw_frequency": 60,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AT_INSURANCE_TXN",
+    "table_b": "M_AT_SN_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AT_INSURANCE_TXN.ACCT_NBR = M_AT_SN_TXN.ACCT_NBR AND M_AT_INSURANCE_TXN.PROD_TYPE_CODE = M_AT_SN_TXN.PROD_TYPE_CODE",
+    "case_count": 60,
+    "raw_frequency": 60,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AT_FUND_TXN",
+    "table_b": "M_AT_SN_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AT_FUND_TXN.ACCT_NBR = M_AT_SN_TXN.ACCT_NBR AND M_AT_FUND_TXN.PROD_TYPE_CODE = M_AT_SN_TXN.PROD_TYPE_CODE",
+    "case_count": 60,
+    "raw_frequency": 60,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AT_FUND_TXN",
+    "table_b": "M_AT_INSURANCE_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AT_FUND_TXN.ACCT_NBR = M_AT_INSURANCE_TXN.ACCT_NBR AND M_AT_FUND_TXN.PROD_TYPE_CODE = M_AT_INSURANCE_TXN.PROD_TYPE_CODE",
+    "case_count": 60,
+    "raw_frequency": 60,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_INFO",
+    "table_b": "M_AC_ACCOUNT_REVENUE",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_INFO.ACCT_NBR = M_AC_ACCOUNT_REVENUE.ACCT_NBR AND M_AC_ACCOUNT_INFO.PROD_TYPE_CODE = M_AC_ACCOUNT_REVENUE.PROD_TYPE_CODE",
+    "case_count": 23,
+    "raw_frequency": 23,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_REVENUE",
+    "table_b": "M_AT_BOND_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_REVENUE.ACCT_NBR = M_AT_BOND_TXN.ACCT_NBR AND M_AC_ACCOUNT_REVENUE.PROD_TYPE_CODE = M_AT_BOND_TXN.PROD_TYPE_CODE",
+    "case_count": 22,
+    "raw_frequency": 22,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_REVENUE",
+    "table_b": "M_AT_SN_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_REVENUE.ACCT_NBR = M_AT_SN_TXN.ACCT_NBR AND M_AC_ACCOUNT_REVENUE.PROD_TYPE_CODE = M_AT_SN_TXN.PROD_TYPE_CODE",
+    "case_count": 22,
+    "raw_frequency": 22,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_REVENUE",
+    "table_b": "M_AT_INSURANCE_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_REVENUE.ACCT_NBR = M_AT_INSURANCE_TXN.ACCT_NBR AND M_AC_ACCOUNT_REVENUE.PROD_TYPE_CODE = M_AT_INSURANCE_TXN.PROD_TYPE_CODE",
+    "case_count": 22,
+    "raw_frequency": 22,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_REVENUE",
+    "table_b": "M_PT_CUSTOMER",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_REVENUE.PARTY_ID = M_PT_CUSTOMER.PARTY_ID",
+    "case_count": 22,
+    "raw_frequency": 22,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_REVENUE",
+    "table_b": "M_AT_FUND_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_REVENUE.ACCT_NBR = M_AT_FUND_TXN.ACCT_NBR AND M_AC_ACCOUNT_REVENUE.PROD_TYPE_CODE = M_AT_FUND_TXN.PROD_TYPE_CODE",
+    "case_count": 22,
+    "raw_frequency": 22,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_ASSET",
+    "table_b": "M_AC_ACCOUNT_REVENUE",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_ASSET.ACCT_NBR = M_AC_ACCOUNT_REVENUE.ACCT_NBR AND M_AC_ACCOUNT_ASSET.PROD_TYPE_CODE = M_AC_ACCOUNT_REVENUE.PROD_TYPE_CODE",
+    "case_count": 21,
+    "raw_frequency": 21,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_INVENTORY",
+    "table_b": "M_AT_ACCOUNT_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_INVENTORY.ACCT_NBR = M_AT_ACCOUNT_TXN.ACCT_NBR AND M_AC_ACCOUNT_INVENTORY.PARTY_ID_MASK = M_AT_ACCOUNT_TXN.PARTY_ID_MASK",
+    "case_count": 20,
+    "raw_frequency": 20,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AT_BOND_TXN",
+    "table_b": "M_RF_CHANNEL",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AT_BOND_TXN.BRANCH_NAME = M_RF_CHANNEL.BRANCH_NAME",
+    "case_count": 20,
+    "raw_frequency": 20,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_PT_SALES",
+    "table_b": "M_RF_CHANNEL",
+    "join_type": "LEFT JOIN",
+    "condition": "M_PT_SALES.BRANCH_NAME = M_RF_CHANNEL.BRANCH_NAME",
+    "case_count": 20,
+    "raw_frequency": 20,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AT_SN_TXN",
+    "table_b": "M_RF_CHANNEL",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AT_SN_TXN.BRANCH_NAME = M_RF_CHANNEL.BRANCH_NAME",
+    "case_count": 20,
+    "raw_frequency": 20,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AT_ACCOUNT_TXN",
+    "table_b": "M_PT_CUSTOMER",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AT_ACCOUNT_TXN.PARTY_ID_MASK = M_PT_CUSTOMER.PARTY_ID_MASK AND M_AT_ACCOUNT_TXN.PARTY_ID = M_PT_CUSTOMER.PARTY_ID",
+    "case_count": 19,
+    "raw_frequency": 19,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_INFO",
+    "table_b": "M_AT_STOCK_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_INFO.PARTY_ID = M_AT_STOCK_TXN.PARTY_ID AND M_AC_ACCOUNT_INFO.PROD_TYPE_CODE = M_AT_STOCK_TXN.PROD_TYPE_CODE",
+    "case_count": 17,
+    "raw_frequency": 17,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AT_STOCK_TXN",
+    "table_b": "M_RF_CHANNEL",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AT_STOCK_TXN.BRANCH_NAME = M_RF_CHANNEL.BRANCH_NAME",
+    "case_count": 14,
+    "raw_frequency": 14,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AT_STOCK_TXN",
+    "table_b": "M_PT_SALES",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AT_STOCK_TXN.EMP_NBR = M_PT_SALES.EMP_NBR",
+    "case_count": 12,
+    "raw_frequency": 12,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_ASSET",
+    "table_b": "M_AT_STOCK_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_ASSET.PARTY_ID = M_AT_STOCK_TXN.PARTY_ID AND M_AC_ACCOUNT_ASSET.PROD_TYPE_CODE = M_AT_STOCK_TXN.PROD_TYPE_CODE",
+    "case_count": 10,
+    "raw_frequency": 10,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AT_STOCK_TXN",
+    "table_b": "M_PT_CUSTOMER",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AT_STOCK_TXN.PARTY_ID = M_PT_CUSTOMER.PARTY_ID",
+    "case_count": 9,
+    "raw_frequency": 9,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_INFO",
+    "table_b": "M_AT_BOND_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_INFO.PARTY_ID = M_AT_BOND_TXN.PARTY_ID AND M_AC_ACCOUNT_INFO.PROD_TYPE_CODE = M_AT_BOND_TXN.PROD_TYPE_CODE",
+    "case_count": 9,
+    "raw_frequency": 9,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_INFO",
+    "table_b": "M_AT_SN_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_INFO.PARTY_ID = M_AT_SN_TXN.PARTY_ID AND M_AC_ACCOUNT_INFO.PROD_TYPE_CODE = M_AT_SN_TXN.PROD_TYPE_CODE",
+    "case_count": 9,
+    "raw_frequency": 9,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_INFO",
+    "table_b": "M_AT_INSURANCE_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_INFO.PARTY_ID = M_AT_INSURANCE_TXN.PARTY_ID AND M_AC_ACCOUNT_INFO.PROD_TYPE_CODE = M_AT_INSURANCE_TXN.PROD_TYPE_CODE",
+    "case_count": 9,
+    "raw_frequency": 9,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_INFO",
+    "table_b": "M_AT_FUND_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_INFO.PARTY_ID = M_AT_FUND_TXN.PARTY_ID AND M_AC_ACCOUNT_INFO.PROD_TYPE_CODE = M_AT_FUND_TXN.PROD_TYPE_CODE",
+    "case_count": 9,
+    "raw_frequency": 9,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_ASSET",
+    "table_b": "M_AC_ACCOUNT_INFO",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_ASSET.ACCT_NBR = M_AC_ACCOUNT_INFO.ACCT_NBR AND M_AC_ACCOUNT_ASSET.PROD_TYPE_CODE = M_AC_ACCOUNT_INFO.PROD_TYPE_CODE",
+    "case_count": 9,
+    "raw_frequency": 9,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AT_BOND_TXN",
+    "table_b": "M_PT_CUSTOMER",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AT_BOND_TXN.PARTY_ID = M_PT_CUSTOMER.PARTY_ID",
+    "case_count": 7,
+    "raw_frequency": 7,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AT_FUND_TXN",
+    "table_b": "M_PT_CUSTOMER",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AT_FUND_TXN.PARTY_ID = M_PT_CUSTOMER.PARTY_ID",
+    "case_count": 7,
+    "raw_frequency": 7,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AT_SN_TXN",
+    "table_b": "M_PT_CUSTOMER",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AT_SN_TXN.PARTY_ID = M_PT_CUSTOMER.PARTY_ID",
+    "case_count": 7,
+    "raw_frequency": 7,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_INVENTORY_DLY",
+    "table_b": "M_AC_ACCOUNT_PROD_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_INVENTORY_DLY.PARTY_ID = M_AC_ACCOUNT_PROD_TXN.PARTY_ID AND M_AC_ACCOUNT_INVENTORY_DLY.ACCT_NBR = M_AC_ACCOUNT_PROD_TXN.ACCT_NBR",
+    "case_count": 6,
+    "raw_frequency": 6,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_INFO",
+    "table_b": "M_PT_CUSTOMER",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_INFO.PARTY_ID = M_PT_CUSTOMER.PARTY_ID",
+    "case_count": 5,
+    "raw_frequency": 5,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_ASSET",
+    "table_b": "M_AT_BOND_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_ASSET.PARTY_ID = M_AT_BOND_TXN.PARTY_ID",
+    "case_count": 5,
+    "raw_frequency": 5,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_ASSET",
+    "table_b": "M_AT_SN_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_ASSET.PARTY_ID = M_AT_SN_TXN.PARTY_ID",
+    "case_count": 5,
+    "raw_frequency": 5,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_ASSET",
+    "table_b": "M_AT_INSURANCE_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_ASSET.PARTY_ID = M_AT_INSURANCE_TXN.PARTY_ID",
+    "case_count": 5,
+    "raw_frequency": 5,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_ASSET",
+    "table_b": "M_AT_FUND_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_ASSET.PARTY_ID = M_AT_FUND_TXN.PARTY_ID",
+    "case_count": 5,
+    "raw_frequency": 5,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT",
+    "table_b": "T_DR_ACCT",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT.ACCT_NBR = T_DR_ACCT.ACCT_NBR",
+    "case_count": 4,
+    "raw_frequency": 4,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_INVENTORY",
+    "table_b": "M_AT_FUTURE_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_INVENTORY.PARTY_ID = M_AT_FUTURE_TXN.PARTY_ID AND M_AC_ACCOUNT_INVENTORY.PROD_TYPE_CODE = M_AT_FUTURE_TXN.PROD_TYPE_CODE",
+    "case_count": 4,
+    "raw_frequency": 4,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT",
+    "table_b": "M_CI_CUST_SURVEY",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT.PARTY_ID = M_CI_CUST_SURVEY.PARTY_ID",
+    "case_count": 4,
+    "raw_frequency": 4,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_INVENTORY",
+    "table_b": "M_AT_STOCK_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_INVENTORY.PARTY_ID = M_AT_STOCK_TXN.PARTY_ID AND M_AC_ACCOUNT_INVENTORY.ACCT_NBR = M_AT_STOCK_TXN.ACCT_NBR",
+    "case_count": 3,
+    "raw_frequency": 3,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AT_STOCK_TXN",
+    "table_b": "T_DR_ACCT",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AT_STOCK_TXN.ACCT_NBR = T_DR_ACCT.ACCT_NBR",
+    "case_count": 3,
+    "raw_frequency": 3,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_PROD_TXN",
+    "table_b": "M_PT_CUSTOMER",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_PROD_TXN.PARTY_ID_MASK = M_PT_CUSTOMER.PARTY_ID_MASK",
+    "case_count": 3,
+    "raw_frequency": 3,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AT_FUTURE_TXN",
+    "table_b": "M_PT_CUSTOMER",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AT_FUTURE_TXN.PARTY_ID = M_PT_CUSTOMER.PARTY_ID",
+    "case_count": 3,
+    "raw_frequency": 3,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_INVENTORY",
+    "table_b": "M_AC_ACCOUNT_REVENUE",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_INVENTORY.PARTY_ID_MASK = M_AC_ACCOUNT_REVENUE.PARTY_ID_MASK",
+    "case_count": 2,
+    "raw_frequency": 2,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_ASSET",
+    "table_b": "M_AT_ACCOUNT_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_ASSET.PARTY_ID_MASK = M_AT_ACCOUNT_TXN.PARTY_ID_MASK",
+    "case_count": 2,
+    "raw_frequency": 2,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT",
+    "table_b": "M_PT_EMPLOYEE",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT.PARTY_ID = M_PT_EMPLOYEE.PARTY_ID",
+    "case_count": 1,
+    "raw_frequency": 1,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_INVENTORY",
+    "table_b": "M_AT_INSURANCE_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_INVENTORY.PARTY_ID = M_AT_INSURANCE_TXN.PARTY_ID",
+    "case_count": 1,
+    "raw_frequency": 1,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_INVENTORY",
+    "table_b": "M_AT_BOND_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_INVENTORY.PARTY_ID = M_AT_BOND_TXN.PARTY_ID",
+    "case_count": 1,
+    "raw_frequency": 1,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_INVENTORY",
+    "table_b": "M_AT_FUND_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_INVENTORY.PARTY_ID = M_AT_FUND_TXN.PARTY_ID",
+    "case_count": 1,
+    "raw_frequency": 1,
+    "cases": [],
+    "auto_extracted": true
+  },
+  {
+    "table_a": "M_AC_ACCOUNT_INVENTORY",
+    "table_b": "M_AT_SN_TXN",
+    "join_type": "LEFT JOIN",
+    "condition": "M_AC_ACCOUNT_INVENTORY.PARTY_ID = M_AT_SN_TXN.PARTY_ID",
+    "case_count": 1,
+    "raw_frequency": 1,
+    "cases": [],
+    "auto_extracted": true
   }
 ]

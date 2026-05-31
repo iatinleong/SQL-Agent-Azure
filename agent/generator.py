@@ -465,7 +465,7 @@ def generate(
             candidate_set.add(t)
     candidate_tables = sorted(candidate_set)
 
-    rels_text = ""  # 暫停 relationship 注入，測試效果
+    rels_text = _load_relationships_text(table_set=set(candidate_tables))
 
     # ── Metrics union：原始需求 ∪ extra_context ────────────────────
     metrics_orig = _select_metrics(requirement)
