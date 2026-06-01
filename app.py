@@ -520,11 +520,19 @@ def _start_new_query(prompt: str, guardrail_tokens: dict | None = None) -> None:
                 entities_text = (entities_text + "\n\n" + _table_block).strip()
 
             # 候選表格 schema（供 Phase 2 report_planner 使用）
-            _candidate_set_plan = set(_get_union_tables(hits, all_cases, available))
-            _candidate_set_plan.update(t for t in _semantic_tables if t in available)
-            for _t in extraction.extra_tables:
-                if _t in available:
-                    _candidate_set_plan.add(_t)
+            # 優先語意 top-5，再補 case union，entity extra 強制加入，上限 15 張
+            _plan_set: list[str] = []
+            _plan_seen: set[str] = set()
+            for _t in _semantic_tables:                          # 語意最相關優先
+                if _t in available and _t not in _plan_seen:
+                    _plan_set.append(_t); _plan_seen.add(_t)
+            for _t in _get_union_tables(hits, all_cases, available):  # case union 補充
+                if _t not in _plan_seen and len(_plan_set) < 15:
+                    _plan_set.append(_t); _plan_seen.add(_t)
+            for _t in extraction.extra_tables:                   # entity 強制加入
+                if _t in available and _t not in _plan_seen:
+                    _plan_set.append(_t); _plan_seen.add(_t)
+            _candidate_set_plan = set(_plan_set)
             schema_for_plan = _load_schema_for_tables(sorted(_candidate_set_plan))
 
             # Phase 1 log：案例 + 表格語意
