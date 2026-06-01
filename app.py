@@ -157,7 +157,7 @@ def _init():
         "_session_token": None,       # cookie 對應的 session token
         "_current_session_id": None,  # 目前對話在 Supabase 的 UUID
         "_session_title": "",         # 目前對話標題（第一句需求）
-        "personalization_enabled": True,
+        "personalization_enabled": False,
     }.items():
         if k not in st.session_state:
             st.session_state[k] = v
@@ -1105,11 +1105,12 @@ def _render_turn(turn: Turn, idx: int):
 
 @st.cache_data(show_spinner=False)
 def _load_available_tables() -> list[str]:
-    from agent.table_retriever import _EXTRA_TABLES, _USED_TABLES_PATH
+    import csv
+    from agent.table_retriever import _EXTRA_TABLES, _SCHEMA_PATH
     tables: set[str] = set(_EXTRA_TABLES)
-    if _USED_TABLES_PATH.exists():
-        for line in _USED_TABLES_PATH.read_text(encoding="utf-8").splitlines():
-            t = line.strip()
+    with open(_SCHEMA_PATH, encoding="utf-8-sig") as f:
+        for row in csv.DictReader(f):
+            t = row.get("表格名稱", "").strip()
             if t:
                 tables.add(t)
     return sorted(tables)
