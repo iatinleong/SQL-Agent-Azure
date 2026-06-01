@@ -211,16 +211,13 @@ def check_hallucination(sql: str) -> list[str]:
         cte.alias_or_name.upper() for cte in tree.find_all(exp.CTE)
     }
 
-    # 收集 CTE 輸出的欄位別名（如 ROW_NUMBER() OVER (...) AS RN）
-    cte_col_aliases: set[str] = set()
-    for cte in tree.find_all(exp.CTE):
-        body = cte.this
-        if isinstance(body, exp.Subquery):
-            body = body.this
-        if isinstance(body, exp.Select):
-            for expr in body.expressions:
-                if isinstance(expr, exp.Alias):
-                    cte_col_aliases.add(expr.alias.upper())
+    # 收集所有 AS 別名（CTE、derived table、視窗函數等），避免外層 SELECT 引用時誤報幻覺
+    cte_col_aliases: set[str] = {
+        expr.alias.upper()
+        for sel in tree.find_all(exp.Select)
+        for expr in sel.expressions
+        if isinstance(expr, exp.Alias)
+    }
 
     # 2. 建立 alias → 正規化表格名 的對照表
     alias_map: dict[str, str] = {}
