@@ -1147,7 +1147,7 @@ def main():
     _render_sidebar(user)
 
     # ── Header ────────────────────────────────────────────────────
-    h1, _, h_toggle, h2, h3 = st.columns([5, 1, 2, 1, 1])
+    h1, _, h2, h3 = st.columns([5, 2, 1, 1])
     with h1:
         st.markdown('<p class="sa-title">SQL Agent</p>', unsafe_allow_html=True)
         name = user.get("display_name") or user.get("employee_id", "")
@@ -1156,8 +1156,6 @@ def main():
             f'{"　　👤 " + name if name else ""}</p>',
             unsafe_allow_html=True,
         )
-    with h_toggle:
-        st.write("")
         st.toggle(
             "個人化啟動" if st.session_state.get("personalization_enabled", True) else "個人化關閉",
             key="personalization_enabled",
