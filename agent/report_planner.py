@@ -105,7 +105,7 @@ def plan_report(
   "granularity": "帳戶|客戶|營業員|分公司|其他",
   "granularity_detail": "每一列代表什麼，用業務員聽得懂的話說明，50字以內",
   "understanding": "若 status=confirm：用業務員聽得懂的白話說明這份報表要呈現什麼，包含時間範圍、篩選條件、排列方式、每列代表什麼；絕對不可出現任何資料表名稱、欄位英文名稱或任何技術術語；否則空字串",
-  "tables": "若 status=confirm：從【參考資料 3：可用欄位定義】中，選出這份報表實際需要的表格英文名稱清單，例如 ['M_AC_ACCOUNT', 'M_AT_STOCK_TXN']；否則空陣列 []"
+  "tables": "若 status=confirm：從【參考資料 3：可用欄位定義】中，選出這份報表可能需要用到的表格英文名稱清單，例如 ['M_AC_ACCOUNT', 'M_AT_STOCK_TXN']；否則空陣列 []"
 }}"""
 
     resp = _chat(

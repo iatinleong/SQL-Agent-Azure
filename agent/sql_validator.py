@@ -40,7 +40,18 @@ def _run_sqlglot(sql: str) -> list[str]:
         return [f"[sqlglot] {e}"]
 
 
-_SQLFLUFF_STYLE_PREFIXES = ("LT", "AL08", "CP", "RF", "CV10", "CV11")
+_SQLFLUFF_STYLE_PREFIXES = (
+    "LT",    # 縮排/空白
+    "AL08",  # 欄位別名樣式
+    "CP",    # 大小寫偏好
+    "RF",    # 引用格式
+    "CV10",  # 關鍵字大小寫
+    "CV11",  # 逗號位置
+    "AM05",  # JOIN 條件需完整表名（alias 是標準寫法，不需強制）
+    "ST09",  # JOIN 表格順序（純樣式）
+    "CV02",  # NVL→COALESCE（兩者 Oracle 均合法）
+    "CV06",  # 語句需以分號結尾（分號存在時仍誤報）
+)
 
 
 def _run_sqlfluff(sql: str) -> list[str]:
