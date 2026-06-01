@@ -36,9 +36,9 @@ _chunk_index: Optional[tuple[list[tuple[str, str]], np.ndarray]] = None
 
 def _load_target_tables() -> set[str]:
     tables: set[str] = set(_EXTRA_TABLES)
-    if _USED_TABLES_PATH.exists():
-        for line in _USED_TABLES_PATH.read_text(encoding="utf-8").splitlines():
-            t = line.strip()
+    with open(_SCHEMA_PATH, encoding="utf-8-sig") as f:
+        for row in csv.DictReader(f):
+            t = row.get("表格名稱", "").strip()
             if t:
                 tables.add(t)
     return tables
