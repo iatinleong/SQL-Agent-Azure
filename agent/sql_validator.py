@@ -302,6 +302,37 @@ def check_hallucination(sql: str) -> list[str]:
     return errors
 
 
+# ── Data Redaction 直接替換 ─────────────────────────────────────────
+
+def _fix_data_redaction(sql: str) -> tuple[str, list[str]]:
+    """將 SELECT 子句中的 party_id 直接替換為 party_id_mask，回傳 (新SQL, 替換訊息list)。"""
+    try:
+        import sqlglot
+        from sqlglot import exp
+        tree = sqlglot.parse_one(sql, dialect="oracle")
+    except Exception:
+        return sql, []
+
+    cols_to_fix: list[exp.Column] = []
+    for select_node in tree.find_all(exp.Select):
+        for expr in select_node.expressions:
+            for col in expr.find_all(exp.Column):
+                if (col.name or "").upper() == "PARTY_ID":
+                    cols_to_fix.append(col)
+
+    if not cols_to_fix:
+        return sql, []
+
+    msgs: list[str] = []
+    for col in cols_to_fix:
+        qualifier = col.table or ""
+        original = f"{qualifier}.party_id" if qualifier else "party_id"
+        msgs.append(f"[Data Redaction] SELECT {original} 已自動替換為 party_id_mask")
+        col.set("this", exp.Identifier(this="party_id_mask"))
+
+    return tree.sql(dialect="oracle"), msgs
+
+
 # ── 全套錯誤收集 ────────────────────────────────────────────────────
 
 def _collect_all_errors(sql: str) -> list[str]:
@@ -424,6 +455,10 @@ def validate_and_fix(
     sql = _clean(sql)
     total_tokens: dict[str, int] = {}
     log: list[dict] = []
+
+    sql, redaction_msgs = _fix_data_redaction(sql)
+    if redaction_msgs:
+        log.append({"round": 0, "errors": redaction_msgs, "passed": True})
 
     for i in range(max_iter):
         errors = _collect_all_errors(sql)
