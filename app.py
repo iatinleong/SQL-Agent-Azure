@@ -157,6 +157,7 @@ def _init():
         "_session_token": None,       # cookie 對應的 session token
         "_current_session_id": None,  # 目前對話在 Supabase 的 UUID
         "_session_title": "",         # 目前對話標題（第一句需求）
+        "personalization_enabled": True,
     }.items():
         if k not in st.session_state:
             st.session_state[k] = v
@@ -466,6 +467,9 @@ def _start_new_query(prompt: str, guardrail_tokens: dict | None = None) -> None:
         _emp = (st.session_state.get("current_user") or {}).get("employee_id", "")
         st.session_state.user_profile = load_profile(_emp)
 
+    _use_profile = st.session_state.get("personalization_enabled", True)
+    _active_profile = st.session_state.get("user_profile", "") if _use_profile else []
+
     with open(ALL_CASES_PATH, encoding="utf-8") as f:
         all_cases = _json.load(f)
 
@@ -559,7 +563,7 @@ def _start_new_query(prompt: str, guardrail_tokens: dict | None = None) -> None:
             schema_text=schema_for_plan,
             metrics_text=_metrics_text,
             skills_text=_skills_text,
-            user_profile=st.session_state.get("user_profile", ""),
+            user_profile=_active_profile,
         )
         _s.empty()
 
@@ -576,7 +580,7 @@ def _start_new_query(prompt: str, guardrail_tokens: dict | None = None) -> None:
         "schema_for_plan":  schema_for_plan,
         "metrics_text":     _metrics_text,
         "skills_text":      _skills_text,
-        "user_profile":     st.session_state.get("user_profile", ""),
+        "user_profile":     _active_profile,
         "phase2_entities": {
             "products":     extraction.detected_products,
             "concepts":     extraction.detected_concepts,
@@ -613,6 +617,7 @@ def _confirm_and_generate(pending: dict) -> None:
     _understanding = plan.understanding or ""
     _extra_context = " ".join(filter(None, [_qa_text, _understanding])).strip()
 
+    _gen_profile = pending.get("user_profile", "") if st.session_state.get("personalization_enabled", True) else []
     gen = generate(
         pending["req"],
         pending["hits"],
@@ -621,7 +626,7 @@ def _confirm_and_generate(pending: dict) -> None:
         scene=pending["scene"],
         report_plan_text=report_plan_text,
         extra_context=_extra_context,
-        user_profile=pending.get("user_profile", ""),
+        user_profile=_gen_profile,
         forced_tables=plan.tables if plan.tables else None,
     )
 
@@ -708,10 +713,10 @@ def _confirm_and_generate(pending: dict) -> None:
     st.session_state._feedback_pending  = True
     st.session_state._auto_fb_triggered = False
 
-    # ── 個人化簡介更新（有 Q&A 修正才觸發）──────────────────────────
+    # ── 個人化簡介更新（有 Q&A 修正才觸發，且個人化功能開啟）────────
     _emp = (st.session_state.get("current_user") or {}).get("employee_id", "")
     _qa  = pending.get("qa_history", [])
-    if _emp and _qa:
+    if _emp and _qa and st.session_state.get("personalization_enabled", True):
         from agent.user_profile import update_profile
         _corrections = [item["a"] for item in _qa if item.get("a")]
         new_profile = update_profile(
@@ -830,10 +835,10 @@ def _run_and_render_refiner(new_query: str, guardrail_tokens: dict | None = None
     if not ok:
         st.warning(f"⚠️ Supabase log 寫入失敗：{err}")
 
-    # ── 個人化簡介更新（refine 本身就是修正訊號）────────────────────
+    # ── 個人化簡介更新（refine 本身就是修正訊號，且個人化功能開啟）──
     if result.intent in ("MODIFY_SQL", "ADD_TABLE"):
         _emp = (st.session_state.get("current_user") or {}).get("employee_id", "")
-        if _emp:
+        if _emp and st.session_state.get("personalization_enabled", True):
             from agent.user_profile import update_profile
             new_profile = update_profile(
                 employee_id=_emp,
@@ -1142,7 +1147,7 @@ def main():
     _render_sidebar(user)
 
     # ── Header ────────────────────────────────────────────────────
-    h1, _, h2, h3 = st.columns([5, 2, 1, 1])
+    h1, _, h_toggle, h2, h3 = st.columns([5, 1, 2, 1, 1])
     with h1:
         st.markdown('<p class="sa-title">SQL Agent</p>', unsafe_allow_html=True)
         name = user.get("display_name") or user.get("employee_id", "")
@@ -1150,6 +1155,12 @@ def main():
             f'<p class="sa-sub">以自然語言描述報表需求，自動生成 Oracle SQL'
             f'{"　　👤 " + name if name else ""}</p>',
             unsafe_allow_html=True,
+        )
+    with h_toggle:
+        st.write("")
+        st.toggle(
+            "個人化啟動" if st.session_state.get("personalization_enabled", True) else "個人化關閉",
+            key="personalization_enabled",
         )
     with h2:
         if st.session_state.conversation or st.session_state._plan:
