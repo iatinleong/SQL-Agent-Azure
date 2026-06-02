@@ -68,6 +68,8 @@ def _run_sqlfluff(sql: str) -> list[str]:
             line = v.get("line_no", "?")
             issues.append(f"[sqlfluff {code}] L{line}: {desc}")
         return issues
+    except ImportError:
+        return []
     except Exception as e:
         return [f"[sqlfluff] {e}"]
 

@@ -134,10 +134,8 @@ def main(argv: list[str] | None = None) -> None:
             hits, all_cases, primary_scene = result
             gen = generate(normalize_requirement(requirement), hits, all_cases, model=model, scene=primary_scene)
             log["candidate_tables"] = gen.candidate_tables
-            log["all_tables"] = gen.all_tables
             log["step_a_sql"] = gen.step_a_sql
             log["step_a_reasoning"] = gen.step_a_reasoning
-            log["final_analysis"] = gen.final_analysis
             log["final_reasoning"] = gen.final_reasoning
             log["final_sql"] = gen.final_sql
             log["tokens"] = gen.tokens
