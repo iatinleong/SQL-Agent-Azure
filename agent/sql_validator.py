@@ -169,6 +169,19 @@ def _load_schema_lookup() -> dict[str, set[str]]:
     return lookup
 
 
+def _load_pk_lookup() -> dict[str, set[str]]:
+    """從 schema.csv 建立 {表格名稱大寫: {PK欄位名稱大寫, ...}}。"""
+    lookup: dict[str, set[str]] = {}
+    with open(_SCHEMA_PATH, encoding="utf-8-sig") as f:
+        for row in csv.DictReader(f):
+            tname = row.get("表格名稱", "").strip().upper()
+            col = row.get("欄位名稱", "").strip().upper()
+            pk = row.get("Primary Key", "").strip()
+            if tname and col and pk == "PK":
+                lookup.setdefault(tname, set()).add(col)
+    return lookup
+
+
 def _normalize_table(db: str, name: str) -> str:
     """將 SQL 中的表格引用正規化為 schema.csv 的 key 格式。
     DM_S_VIEW.M_AC_ACCOUNT → M_AC_ACCOUNT
@@ -453,6 +466,79 @@ def _check_data_redaction(sql: str) -> list[str]:
     return errors
 
 
+# ── JOIN 複合 PK 完整性檢查 ──────────────────────────────────────────
+
+def _check_join_keys(sql: str) -> list[str]:
+    """偵測 JOIN ON/USING 條件缺少複合 PK 欄位，導致一對多資料膨脹的問題。
+
+    規則：若 JOIN 目標表格有複合 PK（>1 欄位），且 ON 條件已包含其中部分 PK 欄位，
+    則全部 PK 欄位都必須出現在 ON 條件中。
+    例：M_AC_ACCOUNT 複合 PK = (acct_nbr, prod_type_code)；
+        ON 只有 acct_nbr 而缺少 prod_type_code → 報錯。
+    """
+    try:
+        import sqlglot
+        from sqlglot import exp
+        tree = sqlglot.parse_one(sql, dialect="oracle")
+    except Exception:
+        return []
+
+    pk_lookup = _load_pk_lookup()
+    cte_names: set[str] = {cte.alias_or_name.upper() for cte in tree.find_all(exp.CTE)}
+    errors: list[str] = []
+    seen: set[str] = set()
+
+    for select_node in tree.find_all(exp.Select):
+        for join in (select_node.args.get("joins") or []):
+            join_src = getattr(join, "this", join)
+            if not isinstance(join_src, exp.Table):
+                continue  # subquery join，略過
+
+            raw_name = join_src.name or ""
+            if not raw_name or raw_name.upper() in cte_names:
+                continue
+
+            tname = _normalize_table(join_src.db or "", raw_name)
+            pk_cols = pk_lookup.get(tname)
+            if not pk_cols or len(pk_cols) < 2:
+                continue  # 無複合 PK，不需檢查
+
+            # 收集 ON 條件中所有欄位名稱
+            on_cols: set[str] = set()
+            on_cond = join.args.get("on")
+            if on_cond:
+                for col in on_cond.find_all(exp.Column):
+                    col_name = (col.name or "").upper()
+                    if col_name:
+                        on_cols.add(col_name)
+
+            # 收集 USING 子句欄位名稱
+            using = join.args.get("using")
+            if using:
+                items = using if isinstance(using, (list, tuple)) else [using]
+                for item in items:
+                    col_name = (getattr(item, "name", None) or "").upper()
+                    if col_name:
+                        on_cols.add(col_name)
+
+            if not on_cols:
+                continue
+
+            intersect = pk_cols & on_cols
+            if intersect and not pk_cols.issubset(on_cols):
+                missing = sorted(pk_cols - on_cols)
+                key = f"joinpk_{tname}_{'_'.join(missing)}"
+                if key not in seen:
+                    seen.add(key)
+                    errors.append(
+                        f"[JOIN 鍵] JOIN {tname} 時 ON 條件缺少複合 PK 欄位 "
+                        f"{', '.join(missing)}（{tname} 複合 PK：{', '.join(sorted(pk_cols))}），"
+                        "缺少此欄位將導致一對多資料膨脹"
+                    )
+
+    return errors
+
+
 # ── 全套錯誤收集 ────────────────────────────────────────────────────
 
 def _collect_all_errors(sql: str) -> list[str]:
@@ -465,6 +551,7 @@ def _collect_all_errors(sql: str) -> list[str]:
 
     errors: list[str] = []
     errors += _check_data_redaction(sql)
+    errors += _check_join_keys(sql)
     errors += _check_oracle_quirks(sql)
     errors += _check_dm_s_view_prefix(sql)
     errors += check_hallucination(sql)
@@ -554,7 +641,11 @@ def _fix_with_llm(sql: str, errors: list[str], model: str, schema_hint: str = ""
                     "方式為 JOIN DM_S_VIEW.M_AC_ACCOUNT ON <主表>.party_id = M_AC_ACCOUNT.party_id，"
                     "再 SELECT M_AC_ACCOUNT.party_id_mask；\n"
                     "   禁止直接 SELECT 其他表格的 party_id_mask。\n"
-                    "3. JOIN / ON / WHERE 條件可使用任何表格的 party_id。"
+                    "3. JOIN / ON / WHERE 條件可使用任何表格的 party_id。\n\n"
+                    "【JOIN 鍵完整性】避免一對多資料膨脹，JOIN ON 條件必須涵蓋目標表格的所有複合 PK 欄位：\n"
+                    "1. 帳戶層級 JOIN：ON 條件必須同時包含 acct_nbr 與 prod_type_code。\n"
+                    "2. 個人層級 JOIN：若目標表的複合 PK 包含 party_id 與 brand_code，ON 條件必須同時包含兩者。\n"
+                    "3. 其他複合 PK：所有 PK 欄位都必須出現在 ON 條件中。"
                 ),
             },
             {
@@ -606,10 +697,17 @@ def validate_and_fix(
 
         has_hallucination = any(e.startswith("[幻覺]") for e in errors)
         has_redaction = any(e.startswith("[Data Redaction]") for e in errors)
+        has_join_key = any(e.startswith("[JOIN 鍵]") for e in errors)
         schema_hint = _build_schema_hint(sql) if has_hallucination else ""
         if has_redaction:
             mac_hint = _build_schema_hint_for_tables(["M_AC_ACCOUNT"])
             schema_hint = f"{schema_hint}\n{mac_hint}".strip() if schema_hint else mac_hint
+        if has_join_key:
+            import re
+            jk_tables = re.findall(r'\[JOIN 鍵\] JOIN (\S+) 時', "\n".join(errors))
+            if jk_tables:
+                jk_hint = _build_schema_hint_for_tables(jk_tables)
+                schema_hint = f"{schema_hint}\n{jk_hint}".strip() if schema_hint else jk_hint
         sql, tokens = _fix_with_llm(sql, errors, model, schema_hint=schema_hint)
         for k, v in tokens.items():
             total_tokens[k] = total_tokens.get(k, 0) + v
