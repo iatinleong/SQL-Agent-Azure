@@ -392,6 +392,28 @@ def _check_data_redaction(sql: str) -> list[str]:
                         "並在 SELECT 改用 M_AC_ACCOUNT.party_id_mask"
                     )
 
+    # ── party_id_mask 與 party_id 互相比較（JOIN / WHERE 條件）──────────
+    for eq_node in tree.find_all(exp.EQ):
+        left, right = eq_node.left, eq_node.right
+        if not (isinstance(left, exp.Column) and isinstance(right, exp.Column)):
+            continue
+        ln = (left.name or "").upper()
+        rn = (right.name or "").upper()
+        if not ({ln, rn} == {"PARTY_ID", "PARTY_ID_MASK"}):
+            continue
+        lq = (left.table or "").lower()
+        rq = (right.table or "").lower()
+        lstr = f"{lq}.{left.name.lower()}" if lq else left.name.lower()
+        rstr = f"{rq}.{right.name.lower()}" if rq else right.name.lower()
+        key = f"eq_{lstr}_{rstr}"
+        if key not in seen:
+            seen.add(key)
+            errors.append(
+                f"[Data Redaction] 禁止 {lstr} = {rstr}："
+                "party_id 與 party_id_mask 數值不同，不可互相比較；"
+                "JOIN / WHERE 條件一律使用 party_id"
+            )
+
     return errors
 
 
