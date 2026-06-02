@@ -661,6 +661,24 @@ def _build_schema_hint_for_tables(table_names: list[str]) -> str:
     return "\n".join(lines)
 
 
+def _find_tables_with_columns(col_names: set[str], max_per_col: int = 3) -> list[str]:
+    """搜尋含指定欄位的表格，供幻覺修正時提示 LLM 換表。
+
+    - 每個欄位最多回傳 max_per_col 張表格（避免 hint 過長）。
+    - 欄位出現在超過 10 張表格時視為泛用欄位（如 PARTY_ID），略過不提示。
+    """
+    schema_lookup = _load_schema_lookup()
+    tables: set[str] = set()
+    for col in {c.upper() for c in col_names}:
+        matching = [t for t, cols in schema_lookup.items() if col in cols]
+        if len(matching) > 10:
+            continue  # 太常見的欄位，提示無意義
+        # 優先非衍生表（名稱不含 '.'）
+        matching.sort(key=lambda t: (1 if "." in t else 0, t))
+        tables.update(matching[:max_per_col])
+    return sorted(tables)
+
+
 # ── LLM 修正 ───────────────────────────────────────────────────────
 
 def _fix_with_llm(sql: str, errors: list[str], model: str, schema_hint: str = "") -> tuple[str, dict]:
@@ -748,6 +766,24 @@ def validate_and_fix(
         has_redaction = any(e.startswith("[Data Redaction]") for e in errors)
         has_join_key = any(e.startswith("[JOIN 鍵]") for e in errors)
         schema_hint = _build_schema_hint(sql) if has_hallucination else ""
+        if has_hallucination:
+            import re
+            hallucinated_cols: set[str] = set()
+            for e in errors:
+                if not e.startswith("[幻覺]"):
+                    continue
+                m = re.search(r"欄位不存在於 schema：\w+\.(\w+)", e)
+                if m:
+                    hallucinated_cols.add(m.group(1).upper())
+                m2 = re.search(r"欄位不存在於查詢中任何表格：(\w+)", e)
+                if m2:
+                    hallucinated_cols.add(m2.group(1).upper())
+            if hallucinated_cols:
+                alt_tables = _find_tables_with_columns(hallucinated_cols)
+                if alt_tables:
+                    alt_hint = _build_schema_hint_for_tables(alt_tables)
+                    alt_section = "【含幻覺欄位的備選表格（請考慮改用這些表格取得對應欄位）】\n" + alt_hint
+                    schema_hint = f"{schema_hint}\n{alt_section}".strip() if schema_hint else alt_section
         if has_redaction:
             mac_hint = _build_schema_hint_for_tables(["M_AC_ACCOUNT"])
             schema_hint = f"{schema_hint}\n{mac_hint}".strip() if schema_hint else mac_hint
