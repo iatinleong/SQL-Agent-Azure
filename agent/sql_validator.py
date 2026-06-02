@@ -392,7 +392,7 @@ def _check_data_redaction(sql: str) -> list[str]:
                         "並在 SELECT 改用 M_AC_ACCOUNT.party_id_mask"
                     )
 
-    # ── party_id_mask 與 party_id 互相比較（JOIN / WHERE 條件）──────────
+    # ── party_id_mask 與 party_id 互相比較（= 等號）────────────────────
     for eq_node in tree.find_all(exp.EQ):
         left, right = eq_node.left, eq_node.right
         if not (isinstance(left, exp.Column) and isinstance(right, exp.Column)):
@@ -412,6 +412,40 @@ def _check_data_redaction(sql: str) -> list[str]:
                 f"[Data Redaction] 禁止 {lstr} = {rstr}："
                 "party_id 與 party_id_mask 數值不同，不可互相比較；"
                 "JOIN / WHERE 條件一律使用 party_id"
+            )
+
+    # ── party_id IN (SELECT party_id_mask ...) 或反向 ────────────────
+    for in_node in tree.find_all(exp.In):
+        outer_col = in_node.this
+        if not isinstance(outer_col, exp.Column):
+            continue
+        outer_name = (outer_col.name or "").upper()
+        if outer_name not in ("PARTY_ID", "PARTY_ID_MASK"):
+            continue
+
+        # 蒐集 IN 子查詢或清單裡出現的欄位名稱
+        inner_names: set[str] = set()
+        subquery = in_node.args.get("query")
+        if subquery:
+            for col in subquery.find_all(exp.Column):
+                inner_names.add((col.name or "").upper())
+        for expr in (in_node.args.get("expressions") or []):
+            if isinstance(expr, exp.Column):
+                inner_names.add((expr.name or "").upper())
+
+        counterpart = "PARTY_ID_MASK" if outer_name == "PARTY_ID" else "PARTY_ID"
+        if counterpart not in inner_names:
+            continue
+
+        oq = (outer_col.table or "").lower()
+        ostr = f"{oq}.{outer_col.name.lower()}" if oq else outer_col.name.lower()
+        key = f"in_{ostr}"
+        if key not in seen:
+            seen.add(key)
+            errors.append(
+                f"[Data Redaction] 禁止 {ostr} IN (... {counterpart.lower()} ...)："
+                "party_id 與 party_id_mask 數值不同，不可互相比較；"
+                f"請改用 EXISTS 或 JOIN 方式，子查詢改 SELECT 1 並以 party_id = party_id 條件關聯"
             )
 
     return errors
@@ -513,12 +547,12 @@ def _fix_with_llm(sql: str, errors: list[str], model: str, schema_hint: str = ""
                     "【Oracle 語法】使用 Oracle 19c+ 語法，"
                     "禁用其他資料庫方言（MySQL 的 LIMIT、PostgreSQL 的 ILIKE 等）。\n\n"
                     "【Data Redaction】party_id 受 Oracle Data Redaction 保護：\n"
-                    "1. 任何 SELECT 清單（含 CTE 內層）禁止出現 party_id。\n"
-                    "2. party_id_mask 必須且只能從 DM_S_VIEW.M_AC_ACCOUNT 取得，"
-                    "方式為 JOIN DM_S_VIEW.M_AC_ACCOUNT ON <主表>.party_id = M_AC_ACCOUNT.party_id，"
-                    "再 SELECT M_AC_ACCOUNT.party_id_mask；\n"
-                    "   禁止直接 SELECT 其他表格的 party_id_mask。\n"
-                    "3. JOIN / ON / WHERE 條件可使用任何表格的 party_id。"
+                    "1. 任何 SELECT 清單（含 CTE 內層）禁止出現 party_id；JOIN / ON / WHERE 條件可使用 party_id。\n"
+                    "2. 需顯示個人識別碼時改用 party_id_mask：若來源表已有 party_id_mask 欄位，"
+                    "直接 SELECT party_id_mask；若無，則 JOIN DM_S_VIEW.M_AC_ACCOUNT ON "
+                    "<主表>.party_id = M_AC_ACCOUNT.party_id，再 SELECT M_AC_ACCOUNT.party_id_mask。\n"
+                    "3. party_id 與 party_id_mask 數值不同，不可互換：JOIN / WHERE / IN 條件一律用 party_id；"
+                    "禁止用 party_id_mask 去比對或 JOIN 其他表格的 party_id。"
                 ),
             },
             {
