@@ -301,10 +301,29 @@ def check_hallucination(sql: str) -> list[str]:
 
 # ── Data Redaction 直接替換 ─────────────────────────────────────────
 
+def _get_direct_real_tables(select_node, cte_names: set[str]) -> set[str]:
+    """回傳此 SELECT 的 FROM/JOIN 直接來源的真實表格（不含 subquery 內層）。"""
+    from sqlglot import exp
+    tables: set[str] = set()
+    sources = []
+    # sqlglot 用 from_ 儲存 FROM 子句（from 是 Python 關鍵字）
+    from_arg = select_node.args.get("from") or select_node.args.get("from_")
+    if from_arg:
+        sources.append(getattr(from_arg, "this", from_arg))
+    for join in (select_node.args.get("joins") or []):
+        sources.append(getattr(join, "this", join))
+    for src in sources:
+        if isinstance(src, exp.Table):
+            raw = src.name or ""
+            if raw and raw.upper() not in cte_names:
+                tables.add(_normalize_table(src.db or "", raw))
+    return tables
+
+
 def _check_data_redaction(sql: str) -> list[str]:
     """偵測 SELECT 中違反 Data Redaction 政策的欄位：
-    - party_id 禁止出現在 SELECT
-    - party_id_mask 必須來自 DM_S_VIEW.M_AC_ACCOUNT（CTE 來源除外）
+    - party_id 禁止出現在 SELECT（含 SELECT *）
+    - party_id_mask 必須且只能來自 M_AC_ACCOUNT（CTE 來源除外）
     回傳錯誤訊息讓 LLM 修正。
     """
     try:
@@ -314,6 +333,7 @@ def _check_data_redaction(sql: str) -> list[str]:
     except Exception:
         return []
 
+    schema_lookup = _load_schema_lookup()
     cte_names: set[str] = {cte.alias_or_name.upper() for cte in tree.find_all(exp.CTE)}
 
     alias_map: dict[str, str] = {}
@@ -332,7 +352,60 @@ def _check_data_redaction(sql: str) -> list[str]:
     seen: set[str] = set()
 
     for select_node in tree.find_all(exp.Select):
+        direct_tables = _get_direct_real_tables(select_node, cte_names)
+
         for expr in select_node.expressions:
+
+            # ── SELECT * ──────────────────────────────────────────────
+            if isinstance(expr, exp.Star):
+                for tname in direct_tables:
+                    if tname not in schema_lookup:
+                        continue
+                    cols = schema_lookup[tname]
+                    if "PARTY_ID" in cols:
+                        key = f"star_pid_{tname}"
+                        if key not in seen:
+                            seen.add(key)
+                            errors.append(
+                                f"[Data Redaction] SELECT * 在 {tname} 含 party_id，"
+                                "請明確列出欄位並以 JOIN DM_S_VIEW.M_AC_ACCOUNT 取得 party_id_mask"
+                            )
+                    elif "PARTY_ID_MASK" in cols and tname != "M_AC_ACCOUNT":
+                        key = f"star_pmask_{tname}"
+                        if key not in seen:
+                            seen.add(key)
+                            errors.append(
+                                f"[Data Redaction] SELECT * 在 {tname} 含非 M_AC_ACCOUNT 的 party_id_mask，"
+                                "請改 JOIN DM_S_VIEW.M_AC_ACCOUNT 取得 party_id_mask"
+                            )
+                continue
+
+            # ── SELECT t.* ────────────────────────────────────────────
+            if isinstance(expr, exp.Column) and isinstance(expr.this, exp.Star):
+                qualifier = (expr.table or "").upper()
+                if qualifier not in cte_names:
+                    resolved = alias_map.get(qualifier, "")
+                    if resolved and resolved in schema_lookup:
+                        cols = schema_lookup[resolved]
+                        if "PARTY_ID" in cols:
+                            key = f"dot_star_pid_{resolved}"
+                            if key not in seen:
+                                seen.add(key)
+                                errors.append(
+                                    f"[Data Redaction] SELECT {qualifier}.* 含 party_id（來源：{resolved}），"
+                                    "請明確列出欄位"
+                                )
+                        elif "PARTY_ID_MASK" in cols and resolved != "M_AC_ACCOUNT":
+                            key = f"dot_star_pmask_{resolved}"
+                            if key not in seen:
+                                seen.add(key)
+                                errors.append(
+                                    f"[Data Redaction] SELECT {qualifier}.* 含非 M_AC_ACCOUNT 的 party_id_mask（來源：{resolved}），"
+                                    "請改 JOIN DM_S_VIEW.M_AC_ACCOUNT"
+                                )
+                continue
+
+            # ── SELECT col ────────────────────────────────────────────
             for col in expr.find_all(exp.Column):
                 col_name = (col.name or "").upper()
                 qualifier = (col.table or "").upper()
@@ -349,20 +422,33 @@ def _check_data_redaction(sql: str) -> list[str]:
                         )
 
                 elif col_name == "PARTY_ID_MASK":
-                    if qualifier in cte_names or not qualifier:
+                    if qualifier in cte_names:
                         continue
-                    resolved = alias_map.get(qualifier, "")
-                    if resolved == "M_AC_ACCOUNT":
-                        continue
-                    key = f"pmask_{qualifier}"
-                    if key not in seen:
-                        seen.add(key)
-                        source = resolved or qualifier
-                        errors.append(
-                            f"[Data Redaction] party_id_mask 必須從 DM_S_VIEW.M_AC_ACCOUNT 取得，"
-                            f"不得直接 SELECT {source}.party_id_mask；"
-                            "請改 JOIN DM_S_VIEW.M_AC_ACCOUNT ON party_id 取得 party_id_mask"
-                        )
+                    if qualifier:
+                        resolved = alias_map.get(qualifier, "")
+                        if resolved == "M_AC_ACCOUNT":
+                            continue
+                        key = f"pmask_{qualifier}"
+                        if key not in seen:
+                            seen.add(key)
+                            source = resolved or qualifier
+                            errors.append(
+                                f"[Data Redaction] party_id_mask 必須從 DM_S_VIEW.M_AC_ACCOUNT 取得，"
+                                f"不得直接 SELECT {source}.party_id_mask；"
+                                "請改 JOIN DM_S_VIEW.M_AC_ACCOUNT ON party_id 取得 party_id_mask"
+                            )
+                    else:
+                        # 無 qualifier：以 direct_tables 推斷來源
+                        for tname in direct_tables:
+                            if tname != "M_AC_ACCOUNT" and tname in schema_lookup and "PARTY_ID_MASK" in schema_lookup[tname]:
+                                key = f"pmask_unq_{tname}"
+                                if key not in seen:
+                                    seen.add(key)
+                                    errors.append(
+                                        f"[Data Redaction] party_id_mask 無 qualifier，"
+                                        f"來源表 {tname} 非 M_AC_ACCOUNT；"
+                                        "請改 JOIN DM_S_VIEW.M_AC_ACCOUNT ON party_id 取得 party_id_mask"
+                                    )
 
     return errors
 
