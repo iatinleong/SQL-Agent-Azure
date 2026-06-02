@@ -480,6 +480,22 @@ def generate(
                 candidate_set.add(t)
         candidate_tables = sorted(candidate_set)
 
+    # 若任何 candidate table 有 party_id，確保 M_AC_ACCOUNT 一定在候選池
+    # 必須在 rels_text 之前，relationship 才會一起注入
+    _MAC = "M_AC_ACCOUNT"
+    if _MAC not in candidate_tables:
+        _cand_upper = {t.upper() for t in candidate_tables}
+        _has_party_id = False
+        with open(SCHEMA_PATH, encoding="utf-8-sig") as _f:
+            for _row in csv.DictReader(_f):
+                if (_row.get("表格名稱", "").upper() in _cand_upper
+                        and _row.get("欄位名稱", "").upper() == "PARTY_ID"):
+                    _has_party_id = True
+                    break
+        if _has_party_id:
+            candidate_tables = sorted(set(candidate_tables) | {_MAC})
+            print(f"  [Data Redaction] 自動加入 {_MAC}（candidate 含 party_id 欄位）")
+
     rels_text = _load_relationships_text(table_set=set(candidate_tables))
 
     # ── Metrics union：原始需求 ∪ extra_context ────────────────────
@@ -497,22 +513,6 @@ def generate(
     skills_new_list = [s for s in skills_extra if s["name"] not in seen_s]
     skills_union = skills_orig + skills_new_list
     skills_text = _format_skills_text(skills_union)
-
-    # 若任何 candidate table 有 party_id，確保 M_AC_ACCOUNT 一定在候選池
-    # （LLM 需要它的 schema 才能正確 JOIN 取得 party_id_mask）
-    _MAC = "M_AC_ACCOUNT"
-    if _MAC not in candidate_tables:
-        _cand_upper = {t.upper() for t in candidate_tables}
-        _has_party_id = False
-        with open(SCHEMA_PATH, encoding="utf-8-sig") as _f:
-            for _row in csv.DictReader(_f):
-                if (_row.get("表格名稱", "").upper() in _cand_upper
-                        and _row.get("欄位名稱", "").upper() == "PARTY_ID"):
-                    _has_party_id = True
-                    break
-        if _has_party_id:
-            candidate_tables = sorted(set(candidate_tables) | {_MAC})
-            print(f"  [Data Redaction] 自動加入 {_MAC}（candidate 含 party_id 欄位）")
 
     step_a_schema = _load_schema_for_tables(candidate_tables)
 
@@ -559,7 +559,7 @@ def generate(
     print(f"\n{SEP}")
     print("=== Step B：SQL 驗證（語法 + schema prefix + 幻覺）===")
     final_sql, step_c_log, fix_tokens = validate_and_fix(
-        final_sql, model=VALIDATOR_MODEL, max_iter=1
+        final_sql, model=VALIDATOR_MODEL, max_iter=2
     )
     for entry in step_c_log:
         if entry["passed"]:

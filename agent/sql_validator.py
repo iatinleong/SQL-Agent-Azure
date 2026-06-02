@@ -430,6 +430,18 @@ def _build_schema_hint(sql: str) -> str:
     return "\n".join(lines)
 
 
+def _build_schema_hint_for_tables(table_names: list[str]) -> str:
+    """回傳指定表格的欄位清單（供 LLM 修正時參考）。"""
+    schema_lookup = _load_schema_lookup()
+    lines = []
+    for tname in table_names:
+        key = tname.upper()
+        if key in schema_lookup:
+            cols = ", ".join(sorted(schema_lookup[key]))
+            lines.append(f"{key}：{cols}")
+    return "\n".join(lines)
+
+
 # ── LLM 修正 ───────────────────────────────────────────────────────
 
 def _fix_with_llm(sql: str, errors: list[str], model: str, schema_hint: str = "") -> tuple[str, dict]:
@@ -507,7 +519,11 @@ def validate_and_fix(
             break
 
         has_hallucination = any(e.startswith("[幻覺]") for e in errors)
+        has_redaction = any(e.startswith("[Data Redaction]") for e in errors)
         schema_hint = _build_schema_hint(sql) if has_hallucination else ""
+        if has_redaction:
+            mac_hint = _build_schema_hint_for_tables(["M_AC_ACCOUNT"])
+            schema_hint = f"{schema_hint}\n{mac_hint}".strip() if schema_hint else mac_hint
         sql, tokens = _fix_with_llm(sql, errors, model, schema_hint=schema_hint)
         for k, v in tokens.items():
             total_tokens[k] = total_tokens.get(k, 0) + v
