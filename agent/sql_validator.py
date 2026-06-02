@@ -471,10 +471,12 @@ def _check_data_redaction(sql: str) -> list[str]:
 def _check_join_keys(sql: str) -> list[str]:
     """偵測 JOIN ON/USING 條件缺少複合 PK 欄位，導致一對多資料膨脹的問題。
 
-    規則：若 JOIN 目標表格有複合 PK（>1 欄位），且 ON 條件已包含其中部分 PK 欄位，
-    則全部 PK 欄位都必須出現在 ON 條件中。
-    例：M_AC_ACCOUNT 複合 PK = (acct_nbr, prod_type_code)；
-        ON 只有 acct_nbr 而缺少 prod_type_code → 報錯。
+    只檢查「穩定 2-column 非時間序列 PK」的表格（如 M_AC_ACCOUNT: acct_nbr+prod_type_code），
+    排除含 SNAP/DATE/YYYYMM 的 PK（WHERE 常補這類條件，強制要求 ON 會有太多誤報）。
+
+    改進：
+    - Qualifier-aware：a.prod_type_code 只算 a 那側的覆蓋，不視為 b 的覆蓋。
+    - 雙向：同時檢查 JOIN 目標（右側）與 FROM 基底表（左側）。
     """
     try:
         import sqlglot
@@ -485,56 +487,95 @@ def _check_join_keys(sql: str) -> list[str]:
 
     pk_lookup = _load_pk_lookup()
     cte_names: set[str] = {cte.alias_or_name.upper() for cte in tree.find_all(exp.CTE)}
+
+    # 只保留 2-column 且 PK 欄位名不含時間序列 token 的表格
+    _TEMPORAL = {"SNAP", "DATE", "YYYYMM"}
+    stable_pk: dict[str, set[str]] = {
+        t: cols for t, cols in pk_lookup.items()
+        if len(cols) == 2
+        and not any(tok in col for col in cols for tok in _TEMPORAL)
+    }
+
+    # 建立 alias → 正規化表格名 對照
+    alias_map: dict[str, str] = {}
+    for tnode in tree.find_all(exp.Table):
+        raw_name = tnode.name or ""
+        if not raw_name or raw_name.upper() in cte_names:
+            continue
+        normalized = _normalize_table(tnode.db or "", raw_name)
+        alias = (tnode.alias or "").upper()
+        if alias:
+            alias_map[alias] = normalized
+        alias_map[raw_name.upper()] = normalized
+        alias_map[normalized] = normalized
+
     errors: list[str] = []
     seen: set[str] = set()
 
     for select_node in tree.find_all(exp.Select):
+        # FROM 基底表
+        from_arg = select_node.args.get("from") or select_node.args.get("from_")
+        from_src = getattr(from_arg, "this", from_arg) if from_arg else None
+        from_table = ""
+        if (isinstance(from_src, exp.Table)
+                and (from_src.name or "").upper() not in cte_names):
+            from_table = _normalize_table(from_src.db or "", from_src.name or "")
+
         for join in (select_node.args.get("joins") or []):
             join_src = getattr(join, "this", join)
             if not isinstance(join_src, exp.Table):
                 continue  # subquery join，略過
-
             raw_name = join_src.name or ""
             if not raw_name or raw_name.upper() in cte_names:
                 continue
+            join_table = _normalize_table(join_src.db or "", raw_name)
 
-            tname = _normalize_table(join_src.db or "", raw_name)
-            pk_cols = pk_lookup.get(tname)
-            if not pk_cols or len(pk_cols) < 2:
-                continue  # 無複合 PK，不需檢查
-
-            # 收集 ON 條件中所有欄位名稱
-            on_cols: set[str] = set()
             on_cond = join.args.get("on")
+
+            # 按 qualifier 分組收集 ON 條件的欄位名稱
+            table_cols: dict[str, set[str]] = {}  # 正規化表格名 → 有 qualifier 的欄位
+            unqualified: set[str] = set()          # 無 qualifier 欄位（兩側均適用）
             if on_cond:
                 for col in on_cond.find_all(exp.Column):
                     col_name = (col.name or "").upper()
-                    if col_name:
-                        on_cols.add(col_name)
+                    qualifier = (col.table or "").upper()
+                    if not col_name:
+                        continue
+                    if qualifier:
+                        resolved = alias_map.get(qualifier, qualifier)
+                        table_cols.setdefault(resolved, set()).add(col_name)
+                    else:
+                        unqualified.add(col_name)
 
-            # 收集 USING 子句欄位名稱
+            # USING 子句：兩側共用，視為 unqualified
             using = join.args.get("using")
             if using:
                 items = using if isinstance(using, (list, tuple)) else [using]
                 for item in items:
                     col_name = (getattr(item, "name", None) or "").upper()
                     if col_name:
-                        on_cols.add(col_name)
+                        unqualified.add(col_name)
 
-            if not on_cols:
-                continue
-
-            intersect = pk_cols & on_cols
-            if intersect and not pk_cols.issubset(on_cols):
-                missing = sorted(pk_cols - on_cols)
-                key = f"joinpk_{tname}_{'_'.join(missing)}"
-                if key not in seen:
-                    seen.add(key)
-                    errors.append(
-                        f"[JOIN 鍵] JOIN {tname} 時 ON 條件缺少複合 PK 欄位 "
-                        f"{', '.join(missing)}（{tname} 複合 PK：{', '.join(sorted(pk_cols))}），"
-                        "缺少此欄位將導致一對多資料膨脹"
-                    )
+            # 對指定表格做 PK 完整性檢查
+            for tname in ([join_table] + ([from_table] if from_table else [])):
+                pk_cols = stable_pk.get(tname)
+                if not pk_cols:
+                    continue
+                # 該表格的有效覆蓋 = 有 qualifier 指向此表的欄位 + 無 qualifier 欄位
+                cols_for_t = table_cols.get(tname, set()) | unqualified
+                intersect = pk_cols & cols_for_t
+                if not intersect:
+                    continue  # 此 JOIN 條件與該表格的 PK 無關，略過
+                if not pk_cols.issubset(cols_for_t):
+                    missing = sorted(pk_cols - cols_for_t)
+                    key = f"joinpk_{tname}_{'_'.join(missing)}"
+                    if key not in seen:
+                        seen.add(key)
+                        errors.append(
+                            f"[JOIN 鍵] {tname} 的 ON 條件缺少複合 PK 欄位 "
+                            f"{', '.join(missing)}（{tname} 複合 PK：{', '.join(sorted(pk_cols))}），"
+                            "缺少此欄位將導致一對多資料膨脹"
+                        )
 
     return errors
 
@@ -642,10 +683,12 @@ def _fix_with_llm(sql: str, errors: list[str], model: str, schema_hint: str = ""
                     "再 SELECT M_AC_ACCOUNT.party_id_mask；\n"
                     "   禁止直接 SELECT 其他表格的 party_id_mask。\n"
                     "3. JOIN / ON / WHERE 條件可使用任何表格的 party_id。\n\n"
-                    "【JOIN 鍵完整性】避免一對多資料膨脹，JOIN ON 條件必須涵蓋目標表格的所有複合 PK 欄位：\n"
-                    "1. 帳戶層級 JOIN：ON 條件必須同時包含 acct_nbr 與 prod_type_code。\n"
-                    "2. 個人層級 JOIN：若目標表的複合 PK 包含 party_id 與 brand_code，ON 條件必須同時包含兩者。\n"
-                    "3. 其他複合 PK：所有 PK 欄位都必須出現在 ON 條件中。"
+                    "【JOIN 鍵完整性】避免一對多資料膨脹：\n"
+                    "1. 帳戶層級 JOIN（M_AC_ACCOUNT、M_AC_ACCOUNT_INFO 等）：\n"
+                    "   ON 條件中 acct_nbr 與 prod_type_code 必須同時出現，且兩者都必須以正確的別名限定到該表格。\n"
+                    "2. 商品層級 JOIN（M_RF_STOCK/M_RF_FUND/M_RF_BOND/M_RF_CB/M_RF_INSURANCE/M_RF_SN 等）：\n"
+                    "   ON 條件必須同時包含商品 ID 欄位（如 stock_prod_id、fund_prod_id）與 prod_type_code。\n"
+                    "3. 適用方向：不論表格在 FROM 側或 JOIN 側，只要其 PK 欄位出現在 ON，就必須完整指定。"
                 ),
             },
             {
