@@ -55,9 +55,14 @@ _SQLFLUFF_STYLE_PREFIXES = (
 
 
 def _run_sqlfluff(sql: str) -> list[str]:
-    """用 sqlfluff oracle dialect 做規則層語法檢查，過濾純樣式規則。"""
+    """用 sqlfluff oracle dialect 做規則層語法檢查，過濾純樣式規則。
+    sqlfluff 未安裝時靜默略過（不視為錯誤）。
+    """
     try:
         import sqlfluff
+    except ImportError:
+        return []
+    try:
         result = sqlfluff.lint(sql, dialect="oracle")
         issues = []
         for v in result:
@@ -747,12 +752,21 @@ def validate_and_fix(
             schema_hint = f"{schema_hint}\n{mac_hint}".strip() if schema_hint else mac_hint
         if has_join_key:
             import re
-            jk_tables = re.findall(r'\[JOIN 鍵\] JOIN (\S+) 時', "\n".join(errors))
+            jk_tables = re.findall(r'\[JOIN 鍵\] (\S+) 的 ON 條件', "\n".join(errors))
             if jk_tables:
                 jk_hint = _build_schema_hint_for_tables(jk_tables)
                 schema_hint = f"{schema_hint}\n{jk_hint}".strip() if schema_hint else jk_hint
         sql, tokens = _fix_with_llm(sql, errors, model, schema_hint=schema_hint)
         for k, v in tokens.items():
             total_tokens[k] = total_tokens.get(k, 0) + v
+
+    # 最後一輪如果是修正後結束（非 passed），補一次最終驗證確認結果
+    if not log[-1]["passed"]:
+        final_errors = _collect_all_errors(sql)
+        log.append({
+            "round": len(log) + 1,
+            "errors": final_errors,
+            "passed": len(final_errors) == 0,
+        })
 
     return sql, log, total_tokens
