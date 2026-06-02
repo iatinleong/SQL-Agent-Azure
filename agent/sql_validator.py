@@ -301,33 +301,70 @@ def check_hallucination(sql: str) -> list[str]:
 
 # ── Data Redaction 直接替換 ─────────────────────────────────────────
 
-def _fix_data_redaction(sql: str) -> tuple[str, list[str]]:
-    """將 SELECT 子句中的 party_id 直接替換為 party_id_mask，回傳 (新SQL, 替換訊息list)。"""
+def _check_data_redaction(sql: str) -> list[str]:
+    """偵測 SELECT 中違反 Data Redaction 政策的欄位：
+    - party_id 禁止出現在 SELECT
+    - party_id_mask 必須來自 DM_S_VIEW.M_AC_ACCOUNT（CTE 來源除外）
+    回傳錯誤訊息讓 LLM 修正。
+    """
     try:
         import sqlglot
         from sqlglot import exp
         tree = sqlglot.parse_one(sql, dialect="oracle")
     except Exception:
-        return sql, []
+        return []
 
-    cols_to_fix: list[exp.Column] = []
+    cte_names: set[str] = {cte.alias_or_name.upper() for cte in tree.find_all(exp.CTE)}
+
+    alias_map: dict[str, str] = {}
+    for tnode in tree.find_all(exp.Table):
+        raw_name = tnode.name or ""
+        if not raw_name or raw_name.upper() in cte_names:
+            continue
+        normalized = _normalize_table(tnode.db or "", raw_name)
+        alias = (tnode.alias or "").upper()
+        if alias:
+            alias_map[alias] = normalized
+        alias_map[raw_name.upper()] = normalized
+        alias_map[normalized] = normalized
+
+    errors: list[str] = []
+    seen: set[str] = set()
+
     for select_node in tree.find_all(exp.Select):
         for expr in select_node.expressions:
             for col in expr.find_all(exp.Column):
-                if (col.name or "").upper() == "PARTY_ID":
-                    cols_to_fix.append(col)
+                col_name = (col.name or "").upper()
+                qualifier = (col.table or "").upper()
 
-    if not cols_to_fix:
-        return sql, []
+                if col_name == "PARTY_ID":
+                    key = f"pid_{qualifier}"
+                    if key not in seen:
+                        seen.add(key)
+                        original = f"{qualifier.lower()}.party_id" if qualifier else "party_id"
+                        errors.append(
+                            f"[Data Redaction] 禁止 SELECT {original}："
+                            "請改 JOIN DM_S_VIEW.M_AC_ACCOUNT ON party_id，"
+                            "並在 SELECT 改用 M_AC_ACCOUNT.party_id_mask"
+                        )
 
-    msgs: list[str] = []
-    for col in cols_to_fix:
-        qualifier = col.table or ""
-        original = f"{qualifier}.party_id" if qualifier else "party_id"
-        msgs.append(f"[Data Redaction] SELECT {original} 已自動替換為 party_id_mask")
-        col.set("this", exp.Identifier(this="party_id_mask"))
+                elif col_name == "PARTY_ID_MASK":
+                    if qualifier in cte_names or not qualifier:
+                        continue
+                    resolved = alias_map.get(qualifier, "")
+                    if resolved == "M_AC_ACCOUNT":
+                        continue
+                    key = f"pmask_{qualifier}"
+                    if key not in seen:
+                        seen.add(key)
+                        source = resolved or qualifier
+                        errors.append(
+                            f"[Data Redaction] party_id_mask 必須從 DM_S_VIEW.M_AC_ACCOUNT 取得，"
+                            f"不得直接 SELECT {source}.party_id_mask；"
+                            "請改 JOIN DM_S_VIEW.M_AC_ACCOUNT ON party_id 取得 party_id_mask"
+                        )
 
-    return tree.sql(dialect="oracle"), msgs
+    return errors
 
 
 # ── 全套錯誤收集 ────────────────────────────────────────────────────
@@ -341,6 +378,7 @@ def _collect_all_errors(sql: str) -> list[str]:
         return glot_errors
 
     errors: list[str] = []
+    errors += _check_data_redaction(sql)
     errors += _check_oracle_quirks(sql)
     errors += _check_dm_s_view_prefix(sql)
     errors += check_hallucination(sql)
@@ -412,10 +450,13 @@ def _fix_with_llm(sql: str, errors: list[str], model: str, schema_hint: str = ""
                     "（例如 S_MELODYJJJIAN.CUSTOMER_GROUP_2026），則保持原樣不做修改。\n\n"
                     "【Oracle 語法】使用 Oracle 19c+ 語法，"
                     "禁用其他資料庫方言（MySQL 的 LIMIT、PostgreSQL 的 ILIKE 等）。\n\n"
-                    "【Data Redaction】party_id 受 Oracle Data Redaction 保護，"
-                    "禁止出現在任何 SELECT 欄位清單中（包含 CTE 內層）；"
-                    "JOIN / ON / WHERE 條件可使用 party_id；"
-                    "需顯示個人識別碼時一律改用 party_id_mask。"
+                    "【Data Redaction】party_id 受 Oracle Data Redaction 保護：\n"
+                    "1. 任何 SELECT 清單（含 CTE 內層）禁止出現 party_id。\n"
+                    "2. party_id_mask 必須且只能從 DM_S_VIEW.M_AC_ACCOUNT 取得，"
+                    "方式為 JOIN DM_S_VIEW.M_AC_ACCOUNT ON <主表>.party_id = M_AC_ACCOUNT.party_id，"
+                    "再 SELECT M_AC_ACCOUNT.party_id_mask；\n"
+                    "   禁止直接 SELECT 其他表格的 party_id_mask。\n"
+                    "3. JOIN / ON / WHERE 條件可使用任何表格的 party_id。"
                 ),
             },
             {
@@ -457,10 +498,6 @@ def validate_and_fix(
     total_tokens: dict[str, int] = {}
     log: list[dict] = []
 
-    sql, redaction_msgs = _fix_data_redaction(sql)
-    if redaction_msgs:
-        log.append({"round": 0, "errors": redaction_msgs, "passed": True})
-
     for i in range(max_iter):
         errors = _collect_all_errors(sql)
         passed = len(errors) == 0
@@ -474,10 +511,5 @@ def validate_and_fix(
         sql, tokens = _fix_with_llm(sql, errors, model, schema_hint=schema_hint)
         for k, v in tokens.items():
             total_tokens[k] = total_tokens.get(k, 0) + v
-
-    # 兜底：確保 LLM 修正後沒有重新引入 party_id
-    sql, redaction_msgs2 = _fix_data_redaction(sql)
-    if redaction_msgs2:
-        log.append({"round": -1, "errors": redaction_msgs2, "passed": True})
 
     return sql, log, total_tokens
