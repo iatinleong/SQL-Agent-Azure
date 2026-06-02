@@ -411,7 +411,11 @@ def _fix_with_llm(sql: str, errors: list[str], model: str, schema_hint: str = ""
                     "唯一例外：表格名稱本身已含有其他 schema 前綴"
                     "（例如 S_MELODYJJJIAN.CUSTOMER_GROUP_2026），則保持原樣不做修改。\n\n"
                     "【Oracle 語法】使用 Oracle 19c+ 語法，"
-                    "禁用其他資料庫方言（MySQL 的 LIMIT、PostgreSQL 的 ILIKE 等）。"
+                    "禁用其他資料庫方言（MySQL 的 LIMIT、PostgreSQL 的 ILIKE 等）。\n\n"
+                    "【Data Redaction】party_id 受 Oracle Data Redaction 保護，"
+                    "禁止出現在任何 SELECT 欄位清單中（包含 CTE 內層）；"
+                    "JOIN / ON / WHERE 條件可使用 party_id；"
+                    "需顯示個人識別碼時一律改用 party_id_mask。"
                 ),
             },
             {
@@ -470,5 +474,10 @@ def validate_and_fix(
         sql, tokens = _fix_with_llm(sql, errors, model, schema_hint=schema_hint)
         for k, v in tokens.items():
             total_tokens[k] = total_tokens.get(k, 0) + v
+
+    # 兜底：確保 LLM 修正後沒有重新引入 party_id
+    sql, redaction_msgs2 = _fix_data_redaction(sql)
+    if redaction_msgs2:
+        log.append({"round": -1, "errors": redaction_msgs2, "passed": True})
 
     return sql, log, total_tokens
