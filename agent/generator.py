@@ -498,6 +498,22 @@ def generate(
     skills_union = skills_orig + skills_new_list
     skills_text = _format_skills_text(skills_union)
 
+    # 若任何 candidate table 有 party_id，確保 M_AC_ACCOUNT 一定在候選池
+    # （LLM 需要它的 schema 才能正確 JOIN 取得 party_id_mask）
+    _MAC = "M_AC_ACCOUNT"
+    if _MAC not in candidate_tables:
+        _cand_upper = {t.upper() for t in candidate_tables}
+        _has_party_id = False
+        with open(SCHEMA_PATH, encoding="utf-8-sig") as _f:
+            for _row in csv.DictReader(_f):
+                if (_row.get("表格名稱", "").upper() in _cand_upper
+                        and _row.get("欄位名稱", "").upper() == "PARTY_ID"):
+                    _has_party_id = True
+                    break
+        if _has_party_id:
+            candidate_tables = sorted(set(candidate_tables) | {_MAC})
+            print(f"  [Data Redaction] 自動加入 {_MAC}（candidate 含 party_id 欄位）")
+
     step_a_schema = _load_schema_for_tables(candidate_tables)
 
     rel_count = rels_text.count("\n  ") if rels_text else 0
