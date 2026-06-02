@@ -55,14 +55,9 @@ _SQLFLUFF_STYLE_PREFIXES = (
 
 
 def _run_sqlfluff(sql: str) -> list[str]:
-    """用 sqlfluff oracle dialect 做規則層語法檢查，過濾純樣式規則。
-    sqlfluff 未安裝時靜默略過（不視為錯誤）。
-    """
+    """用 sqlfluff oracle dialect 做規則層語法檢查，過濾純樣式規則。"""
     try:
         import sqlfluff
-    except ImportError:
-        return []
-    try:
         result = sqlfluff.lint(sql, dialect="oracle")
         issues = []
         for v in result:
@@ -170,19 +165,6 @@ def _load_schema_lookup() -> dict[str, set[str]]:
             tname = row.get("表格名稱", "").strip().upper()
             col = row.get("欄位名稱", "").strip().upper()
             if tname and col:
-                lookup.setdefault(tname, set()).add(col)
-    return lookup
-
-
-def _load_pk_lookup() -> dict[str, set[str]]:
-    """從 schema.csv 建立 {表格名稱大寫: {PK欄位名稱大寫, ...}}。"""
-    lookup: dict[str, set[str]] = {}
-    with open(_SCHEMA_PATH, encoding="utf-8-sig") as f:
-        for row in csv.DictReader(f):
-            tname = row.get("表格名稱", "").strip().upper()
-            col = row.get("欄位名稱", "").strip().upper()
-            pk = row.get("Primary Key", "").strip()
-            if tname and col and pk == "PK":
                 lookup.setdefault(tname, set()).add(col)
     return lookup
 
@@ -471,120 +453,6 @@ def _check_data_redaction(sql: str) -> list[str]:
     return errors
 
 
-# ── JOIN 複合 PK 完整性檢查 ──────────────────────────────────────────
-
-def _check_join_keys(sql: str) -> list[str]:
-    """偵測 JOIN ON/USING 條件缺少複合 PK 欄位，導致一對多資料膨脹的問題。
-
-    只檢查「穩定 2-column 非時間序列 PK」的表格（如 M_AC_ACCOUNT: acct_nbr+prod_type_code），
-    排除含 SNAP/DATE/YYYYMM 的 PK（WHERE 常補這類條件，強制要求 ON 會有太多誤報）。
-
-    改進：
-    - Qualifier-aware：a.prod_type_code 只算 a 那側的覆蓋，不視為 b 的覆蓋。
-    - 雙向：同時檢查 JOIN 目標（右側）與 FROM 基底表（左側）。
-    """
-    try:
-        import sqlglot
-        from sqlglot import exp
-        tree = sqlglot.parse_one(sql, dialect="oracle")
-    except Exception:
-        return []
-
-    pk_lookup = _load_pk_lookup()
-    cte_names: set[str] = {cte.alias_or_name.upper() for cte in tree.find_all(exp.CTE)}
-
-    # 只保留 2-column 且 PK 欄位名不含時間序列 token 的表格
-    _TEMPORAL = {"SNAP", "DATE", "YYYYMM"}
-    stable_pk: dict[str, set[str]] = {
-        t: cols for t, cols in pk_lookup.items()
-        if len(cols) == 2
-        and not any(tok in col for col in cols for tok in _TEMPORAL)
-    }
-
-    # 建立 alias → 正規化表格名 對照
-    alias_map: dict[str, str] = {}
-    for tnode in tree.find_all(exp.Table):
-        raw_name = tnode.name or ""
-        if not raw_name or raw_name.upper() in cte_names:
-            continue
-        normalized = _normalize_table(tnode.db or "", raw_name)
-        alias = (tnode.alias or "").upper()
-        if alias:
-            alias_map[alias] = normalized
-        alias_map[raw_name.upper()] = normalized
-        alias_map[normalized] = normalized
-
-    errors: list[str] = []
-    seen: set[str] = set()
-
-    for select_node in tree.find_all(exp.Select):
-        # FROM 基底表
-        from_arg = select_node.args.get("from") or select_node.args.get("from_")
-        from_src = getattr(from_arg, "this", from_arg) if from_arg else None
-        from_table = ""
-        if (isinstance(from_src, exp.Table)
-                and (from_src.name or "").upper() not in cte_names):
-            from_table = _normalize_table(from_src.db or "", from_src.name or "")
-
-        for join in (select_node.args.get("joins") or []):
-            join_src = getattr(join, "this", join)
-            if not isinstance(join_src, exp.Table):
-                continue  # subquery join，略過
-            raw_name = join_src.name or ""
-            if not raw_name or raw_name.upper() in cte_names:
-                continue
-            join_table = _normalize_table(join_src.db or "", raw_name)
-
-            on_cond = join.args.get("on")
-
-            # 按 qualifier 分組收集 ON 條件的欄位名稱
-            table_cols: dict[str, set[str]] = {}  # 正規化表格名 → 有 qualifier 的欄位
-            unqualified: set[str] = set()          # 無 qualifier 欄位（兩側均適用）
-            if on_cond:
-                for col in on_cond.find_all(exp.Column):
-                    col_name = (col.name or "").upper()
-                    qualifier = (col.table or "").upper()
-                    if not col_name:
-                        continue
-                    if qualifier:
-                        resolved = alias_map.get(qualifier, qualifier)
-                        table_cols.setdefault(resolved, set()).add(col_name)
-                    else:
-                        unqualified.add(col_name)
-
-            # USING 子句：兩側共用，視為 unqualified
-            using = join.args.get("using")
-            if using:
-                items = using if isinstance(using, (list, tuple)) else [using]
-                for item in items:
-                    col_name = (getattr(item, "name", None) or "").upper()
-                    if col_name:
-                        unqualified.add(col_name)
-
-            # 對指定表格做 PK 完整性檢查
-            for tname in ([join_table] + ([from_table] if from_table else [])):
-                pk_cols = stable_pk.get(tname)
-                if not pk_cols:
-                    continue
-                # 該表格的有效覆蓋 = 有 qualifier 指向此表的欄位 + 無 qualifier 欄位
-                cols_for_t = table_cols.get(tname, set()) | unqualified
-                intersect = pk_cols & cols_for_t
-                if not intersect:
-                    continue  # 此 JOIN 條件與該表格的 PK 無關，略過
-                if not pk_cols.issubset(cols_for_t):
-                    missing = sorted(pk_cols - cols_for_t)
-                    key = f"joinpk_{tname}_{'_'.join(missing)}"
-                    if key not in seen:
-                        seen.add(key)
-                        errors.append(
-                            f"[JOIN 鍵] {tname} 的 ON 條件缺少複合 PK 欄位 "
-                            f"{', '.join(missing)}（{tname} 複合 PK：{', '.join(sorted(pk_cols))}），"
-                            "缺少此欄位將導致一對多資料膨脹"
-                        )
-
-    return errors
-
-
 # ── 全套錯誤收集 ────────────────────────────────────────────────────
 
 def _collect_all_errors(sql: str) -> list[str]:
@@ -597,7 +465,6 @@ def _collect_all_errors(sql: str) -> list[str]:
 
     errors: list[str] = []
     errors += _check_data_redaction(sql)
-    errors += _check_join_keys(sql)
     errors += _check_oracle_quirks(sql)
     errors += _check_dm_s_view_prefix(sql)
     errors += check_hallucination(sql)
@@ -661,24 +528,6 @@ def _build_schema_hint_for_tables(table_names: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _find_tables_with_columns(col_names: set[str], max_per_col: int = 3) -> list[str]:
-    """搜尋含指定欄位的表格，供幻覺修正時提示 LLM 換表。
-
-    - 每個欄位最多回傳 max_per_col 張表格（避免 hint 過長）。
-    - 欄位出現在超過 10 張表格時視為泛用欄位（如 PARTY_ID），略過不提示。
-    """
-    schema_lookup = _load_schema_lookup()
-    tables: set[str] = set()
-    for col in {c.upper() for c in col_names}:
-        matching = [t for t, cols in schema_lookup.items() if col in cols]
-        if len(matching) > 10:
-            continue  # 太常見的欄位，提示無意義
-        # 優先非衍生表（名稱不含 '.'）
-        matching.sort(key=lambda t: (1 if "." in t else 0, t))
-        tables.update(matching[:max_per_col])
-    return sorted(tables)
-
-
 # ── LLM 修正 ───────────────────────────────────────────────────────
 
 def _fix_with_llm(sql: str, errors: list[str], model: str, schema_hint: str = "") -> tuple[str, dict]:
@@ -701,18 +550,11 @@ def _fix_with_llm(sql: str, errors: list[str], model: str, schema_hint: str = ""
                     "禁用其他資料庫方言（MySQL 的 LIMIT、PostgreSQL 的 ILIKE 等）。\n\n"
                     "【Data Redaction】party_id 受 Oracle Data Redaction 保護：\n"
                     "1. 任何 SELECT 清單（含 CTE 內層）禁止出現 party_id。\n"
-                    "2. party_id_mask 必須且只能從 DM_S_VIEW.M_AC_ACCOUNT 取得，依以下順序判斷：\n"
-                    "   (a) 若原 SQL 已有 DM_S_VIEW.M_AC_ACCOUNT 的 alias，直接改 SELECT 該 alias.party_id_mask；\n"
-                    "   (b) 只有原 SQL 沒有 M_AC_ACCOUNT、但需要由其他表的 party_id 取得 mask 時，才 JOIN DM_S_VIEW.M_AC_ACCOUNT；\n"
-                    "   (c) 禁止為了取得 party_id_mask 對 M_AC_ACCOUNT 做 self-join；\n"
-                    "   (d) 禁止直接 SELECT 其他表格的 party_id_mask。\n"
-                    "3. JOIN / ON / WHERE 條件可使用任何表格的 party_id。\n\n"
-                    "【JOIN 鍵完整性】避免一對多資料膨脹：\n"
-                    "1. 帳戶層級 JOIN（M_AC_ACCOUNT、M_AC_ACCOUNT_INFO 等）：\n"
-                    "   ON 條件中 acct_nbr 與 prod_type_code 必須同時出現，且兩者都必須以正確的別名限定到該表格。\n"
-                    "2. 商品層級 JOIN（M_RF_STOCK/M_RF_FUND/M_RF_BOND/M_RF_CB/M_RF_INSURANCE/M_RF_SN 等）：\n"
-                    "   ON 條件必須同時包含商品 ID 欄位（如 stock_prod_id、fund_prod_id）與 prod_type_code。\n"
-                    "3. 適用方向：不論表格在 FROM 側或 JOIN 側，只要其 PK 欄位出現在 ON，就必須完整指定。"
+                    "2. party_id_mask 必須且只能從 DM_S_VIEW.M_AC_ACCOUNT 取得，"
+                    "方式為 JOIN DM_S_VIEW.M_AC_ACCOUNT ON <主表>.party_id = M_AC_ACCOUNT.party_id，"
+                    "再 SELECT M_AC_ACCOUNT.party_id_mask；\n"
+                    "   禁止直接 SELECT 其他表格的 party_id_mask。\n"
+                    "3. JOIN / ON / WHERE 條件可使用任何表格的 party_id。"
                 ),
             },
             {
@@ -764,46 +606,12 @@ def validate_and_fix(
 
         has_hallucination = any(e.startswith("[幻覺]") for e in errors)
         has_redaction = any(e.startswith("[Data Redaction]") for e in errors)
-        has_join_key = any(e.startswith("[JOIN 鍵]") for e in errors)
         schema_hint = _build_schema_hint(sql) if has_hallucination else ""
-        if has_hallucination:
-            import re
-            hallucinated_cols: set[str] = set()
-            for e in errors:
-                if not e.startswith("[幻覺]"):
-                    continue
-                m = re.search(r"欄位不存在於 schema：\w+\.(\w+)", e)
-                if m:
-                    hallucinated_cols.add(m.group(1).upper())
-                m2 = re.search(r"欄位不存在於查詢中任何表格：(\w+)", e)
-                if m2:
-                    hallucinated_cols.add(m2.group(1).upper())
-            if hallucinated_cols:
-                alt_tables = _find_tables_with_columns(hallucinated_cols)
-                if alt_tables:
-                    alt_hint = _build_schema_hint_for_tables(alt_tables)
-                    alt_section = "【含幻覺欄位的備選表格（請考慮改用這些表格取得對應欄位）】\n" + alt_hint
-                    schema_hint = f"{schema_hint}\n{alt_section}".strip() if schema_hint else alt_section
         if has_redaction:
             mac_hint = _build_schema_hint_for_tables(["M_AC_ACCOUNT"])
             schema_hint = f"{schema_hint}\n{mac_hint}".strip() if schema_hint else mac_hint
-        if has_join_key:
-            import re
-            jk_tables = re.findall(r'\[JOIN 鍵\] (\S+) 的 ON 條件', "\n".join(errors))
-            if jk_tables:
-                jk_hint = _build_schema_hint_for_tables(jk_tables)
-                schema_hint = f"{schema_hint}\n{jk_hint}".strip() if schema_hint else jk_hint
         sql, tokens = _fix_with_llm(sql, errors, model, schema_hint=schema_hint)
         for k, v in tokens.items():
             total_tokens[k] = total_tokens.get(k, 0) + v
-
-    # 最後一輪如果是修正後結束（非 passed），補一次最終驗證確認結果
-    if not log[-1]["passed"]:
-        final_errors = _collect_all_errors(sql)
-        log.append({
-            "round": len(log) + 1,
-            "errors": final_errors,
-            "passed": len(final_errors) == 0,
-        })
 
     return sql, log, total_tokens
