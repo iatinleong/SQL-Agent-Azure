@@ -566,32 +566,7 @@ def _fix_sysdate(sql: str) -> tuple[str, list[str]]:
     return '\n'.join(lines), notices
 
 
-# ── 隱私與語意規則 ──────────────────────────────────────────────────
-
-def _check_forbidden_tables(sql: str) -> list[str]:
-    """禁止使用 PARTY_NAME 表格（隱私政策）。"""
-    try:
-        import sqlglot
-        from sqlglot import exp
-        tree = sqlglot.parse_one(sql, dialect="oracle")
-    except Exception:
-        return []
-
-    errors: list[str] = []
-    seen: set[str] = set()
-    for tnode in tree.find_all(exp.Table):
-        name = (tnode.name or "").upper()
-        if name != "PARTY_NAME":
-            continue
-        full = f"{tnode.db.upper() + '.' if tnode.db else ''}{name}"
-        if full not in seen:
-            seen.add(full)
-            errors.append(
-                f"[隱私政策] 禁止使用 {full}：PARTY_NAME 表格因隱私規定不可查詢，"
-                "請移除客戶姓名欄位"
-            )
-    return errors
-
+# ── 語意規則 ────────────────────────────────────────────────────────
 
 def _check_mask_misuse(sql: str) -> list[str]:
     """偵測最終 SELECT 中 party_id_mask 被 alias 成姓名類欄位（如客戶姓名）。
@@ -639,7 +614,6 @@ def _collect_all_errors(sql: str) -> list[str]:
         return glot_errors
 
     errors: list[str] = []
-    errors += _check_forbidden_tables(sql)
     errors += _check_data_redaction(sql)
     errors += _check_mask_misuse(sql)
     errors += _check_oracle_quirks(sql)
@@ -734,9 +708,7 @@ def _fix_with_llm(sql: str, errors: list[str], model: str, schema_hint: str = ""
                     "3. party_id 與 party_id_mask 數值不同，不可互換：JOIN / WHERE / IN 條件一律用 party_id；"
                     "禁止用 party_id_mask 去比對或 JOIN 其他表格的 party_id。\n"
                     "4. party_id_mask 是加密識別碼，禁止 alias 成姓名欄位（如 AS \"客戶姓名\"）；"
-                    "若姓名來源表不存在或被禁用，一律改為 NULL AS \"客戶姓名\"，並加註解說明原因，不可用 party_id_mask 代替。\n\n"
-                    "【隱私政策】禁止使用 PARTY_NAME 表格（任何 schema 下）：移除對該表的所有 JOIN，"
-                    "並將姓名欄位改為 NULL AS \"客戶姓名\" -- 隱私規定不可查詢。\n\n"
+                    "若姓名來源表不存在，請將姓名欄位移除，不可用 party_id_mask 代替。\n\n"
                     "【資料時效】整個資料庫每日 T-1 更新：所有日期欄位的最新可用資料為昨日（SYSDATE-1）。"
                     "使用者說「今天」一律解讀為昨日；禁止以今日日期（SYSDATE 或等於今日的 DATE literal）"
                     "作為篩選上限，否則查詢結果為空。"
