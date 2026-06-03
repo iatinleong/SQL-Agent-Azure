@@ -77,6 +77,22 @@ def run_static_tests() -> int:
             [],
             True,
         ),
+        (
+            "正確：party_id 只在 OVER(PARTITION BY) 內，SELECT 輸出用 party_id_mask → 無錯",
+            textwrap.dedent("""
+                WITH base AS (
+                    SELECT
+                        a.party_id_mask,
+                        MIN(a.open_date) OVER (PARTITION BY a.party_id) AS min_open_date,
+                        ROW_NUMBER() OVER (PARTITION BY a.party_id ORDER BY a.open_date) AS rn
+                    FROM DM_S_VIEW.M_AC_ACCOUNT a
+                    JOIN DM_S_VIEW.M_PT_CUSTOMER b ON a.party_id = b.party_id
+                )
+                SELECT party_id_mask, min_open_date FROM base WHERE rn = 1
+            """),
+            [],
+            True,
+        ),
     ]
 
     passed = failed = 0

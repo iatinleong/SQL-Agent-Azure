@@ -303,6 +303,21 @@ def check_hallucination(sql: str) -> list[str]:
 
 # ── Data Redaction 直接替換 ─────────────────────────────────────────
 
+def _is_in_window_spec(col_node) -> bool:
+    """Return True if col_node is inside an OVER() window spec (PARTITION BY / ORDER BY).
+    Such usage is NOT a SELECT output — it's an analytical key, like JOIN/WHERE.
+    """
+    from sqlglot import exp
+    node = getattr(col_node, "parent", None)
+    while node is not None:
+        if isinstance(node, exp.Window):
+            return True
+        if isinstance(node, exp.Select):
+            return False
+        node = getattr(node, "parent", None)
+    return False
+
+
 def _get_direct_real_tables(select_node, cte_names: set[str]) -> set[str]:
     """回傳此 SELECT 的 FROM/JOIN 直接來源的真實表格（不含 subquery 內層）。"""
     from sqlglot import exp
@@ -361,6 +376,10 @@ def _check_data_redaction(sql: str) -> list[str]:
                 qualifier = (col.table or "").upper()
 
                 if col_name != "PARTY_ID":
+                    continue
+                # PARTITION BY / ORDER BY inside OVER() is an analytical key,
+                # not a SELECT output — treat like JOIN/WHERE, skip
+                if _is_in_window_spec(col):
                     continue
 
                 key = f"pid_{qualifier}"
