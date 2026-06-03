@@ -575,6 +575,10 @@ def generate(
         final_sql, model=VALIDATOR_MODEL, max_iter=2
     )
     for entry in step_c_log:
+        if "auto_fixes" in entry:
+            for msg in entry["auto_fixes"]:
+                print(f"  [auto-fix] {msg}")
+            continue
         if entry["passed"]:
             print(f"  Round {entry['round']}：✅ 通過")
         else:

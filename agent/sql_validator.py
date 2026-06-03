@@ -679,7 +679,72 @@ def _build_schema_hint_for_tables(table_names: list[str]) -> str:
     return "\n".join(lines)
 
 
-# ── LLM 修正 ───────────────────────────────────────────────────────
+# ── Block-level rewrite ──────────────────────────────────────────────
+
+def _rewrite_block(
+    block_name: str,
+    block_body: str,
+    errors: list[str],
+    outputs_contract: set[str],
+    upstream_outputs: dict[str, set[str]],
+    schema_hint: str,
+    model: str,
+) -> tuple[str, dict]:
+    """Rewrite a single SQL block to fix the given errors.
+    Outputs contract ensures downstream CTE column references survive the rewrite.
+    """
+    from .generator import _chat
+
+    is_final = block_name == "final_select"
+    parts: list[str] = [f"【錯誤訊息】\n{chr(10).join(errors)}"]
+
+    if outputs_contract:
+        parts.append(
+            "【此 block 必須保留的輸出欄位（禁止改名或刪除，下游 block 正在引用）】\n"
+            + ", ".join(sorted(outputs_contract))
+        )
+    if upstream_outputs:
+        lines = [f"  {n}: {', '.join(sorted(cols))}" for n, cols in upstream_outputs.items() if cols]
+        if lines:
+            parts.append("【上游 CTE 可用欄位】\n" + "\n".join(lines))
+    if schema_hint:
+        parts.append(f"【Schema 定義（欄位清單）】\n{schema_hint}")
+    parts.append(f"【需修正的 block（{block_name}）】\n{block_body}")
+
+    resp = _chat(
+        model,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "你是 Oracle SQL 專家。根據錯誤訊息修正指定 SQL block。\n"
+                    + (
+                        "只輸出修正後的完整 SELECT 語句，不要說明，不要 markdown fence。\n"
+                        if is_final else
+                        "只輸出修正後的 CTE body SQL（括號內的 SELECT 語句），不要說明，不要 markdown fence。\n"
+                    )
+                    + "嚴格遵守：禁止移除或改名【必須保留的輸出欄位】中列出的欄位。\n"
+                    + "【Schema 規則】所有表格加 DM_S_VIEW. 前綴（已有其他前綴除外）。\n"
+                    + "【Oracle 語法】Oracle 19c+，禁用其他方言。\n"
+                    + "【Data Redaction】最終 SELECT 禁止輸出 party_id；CTE 內可保留作 JOIN/GROUP key。"
+                ),
+            },
+            {"role": "user", "content": "\n\n".join(parts)},
+        ],
+        temperature=0,
+    )
+    fixed = (resp.choices[0].message.content or "").strip()
+    for fence in ("```sql", "```"):
+        if fixed.startswith(fence):
+            fixed = fixed[len(fence):]
+    fixed = fixed.strip("`").strip()
+    return fixed, {
+        "fix_in": resp.usage.prompt_tokens,
+        "fix_out": resp.usage.completion_tokens,
+    }
+
+
+# ── LLM 修正（整份 SQL fallback）──────────────────────────────────────
 
 def _fix_with_llm(sql: str, errors: list[str], model: str, schema_hint: str = "") -> tuple[str, dict]:
     from .generator import _chat
@@ -744,13 +809,24 @@ def _fix_with_llm(sql: str, errors: list[str], model: str, schema_hint: str = ""
 def validate_and_fix(
     sql: str,
     model: str = VALIDATOR_MODEL,
-    max_iter: int = 1,
+    max_iter: int = 2,
 ) -> tuple[str, list[dict], dict]:
     """
     全套驗證並自動修正，最多 max_iter 輪。
     回傳 (final_sql, log, total_tokens)。
-    log 每筆：{"round": int, "errors": list[str], "passed": bool}
+
+    log 每筆格式：
+      {"auto_fixes": [...]}          — 第一筆（若有 SYSDATE 自動修正）
+      {"round": int, "errors": list[str], "passed": bool}
+        errors 每條帶 [block=<name>] 前綴（可歸因時）
+
+    修正策略：
+      1. 可歸因到 block 的 error → BlockRewriter 逐 block 修
+      2. 無法歸因的 error → _fix_with_llm 整份 SQL fallback
     """
+    import re as _re
+    from .block_registry import BlockRegistry, apply_replacements
+
     sql, auto_fixes = _fix_sysdate(_clean(sql))
     total_tokens: dict[str, int] = {}
     log: list[dict] = []
@@ -759,20 +835,68 @@ def validate_and_fix(
 
     for i in range(max_iter):
         errors = _collect_all_errors(sql)
+
+        registry = BlockRegistry(sql)
+        tagged = registry.tag_errors(errors)
+
         passed = len(errors) == 0
-        log.append({"round": i + 1, "errors": errors, "passed": passed})
+        log.append({"round": i + 1, "errors": tagged, "passed": passed})
 
         if passed:
             break
 
-        has_hallucination = any(e.startswith("[幻覺]") for e in errors)
-        has_redaction = any(e.startswith("[Data Redaction]") for e in errors)
-        schema_hint = _build_schema_hint(sql) if has_hallucination else ""
-        if has_redaction:
-            mac_hint = _build_schema_hint_for_tables(["M_AC_ACCOUNT"])
-            schema_hint = f"{schema_hint}\n{mac_hint}".strip() if schema_hint else mac_hint
-        sql, tokens = _fix_with_llm(sql, errors, model, schema_hint=schema_hint)
-        for k, v in tokens.items():
-            total_tokens[k] = total_tokens.get(k, 0) + v
+        # Partition: errors attributed to a block vs unattributed
+        block_errors: dict[str, list[str]] = {}
+        untagged: list[str] = []
+        for err in tagged:
+            m = _re.match(r'\[block=([^\]]+)\]\s*(.*)', err, _re.DOTALL)
+            if m:
+                block_errors.setdefault(m.group(1), []).append(m.group(2))
+            else:
+                untagged.append(err)
+
+        replacements: list[tuple[int, int, str]] = []
+
+        # Block-level repair
+        for block_name, berrs in block_errors.items():
+            ctx = registry.rewrite_context(block_name)
+            if not ctx:
+                untagged.extend(berrs)
+                continue
+
+            schema_hint = _build_schema_hint_for_tables(list(ctx["real_tables"]))
+            if any("[Data Redaction]" in e for e in berrs):
+                mac_hint = _build_schema_hint_for_tables(["M_AC_ACCOUNT"])
+                schema_hint = f"{schema_hint}\n{mac_hint}".strip() if schema_hint else mac_hint
+
+            new_body, tokens = _rewrite_block(
+                block_name,
+                ctx["body_sql"],
+                berrs,
+                ctx["outputs"],
+                ctx["upstream_outputs"],
+                schema_hint,
+                model,
+            )
+            block = registry.get(block_name)
+            if block:
+                replacements.append((block.body_start, block.body_end, new_body))
+            for k, v in tokens.items():
+                total_tokens[k] = total_tokens.get(k, 0) + v
+
+        if replacements:
+            sql = apply_replacements(sql, replacements)
+
+        # Fallback: whole-SQL fix for unattributed errors
+        if untagged:
+            has_hallucination = any("[幻覺]" in e for e in untagged)
+            has_redaction = any("[Data Redaction]" in e for e in untagged)
+            schema_hint = _build_schema_hint(sql) if has_hallucination else ""
+            if has_redaction:
+                mac_hint = _build_schema_hint_for_tables(["M_AC_ACCOUNT"])
+                schema_hint = f"{schema_hint}\n{mac_hint}".strip() if schema_hint else mac_hint
+            sql, fix_tokens = _fix_with_llm(sql, untagged, model, schema_hint=schema_hint)
+            for k, v in fix_tokens.items():
+                total_tokens[k] = total_tokens.get(k, 0) + v
 
     return sql, log, total_tokens
