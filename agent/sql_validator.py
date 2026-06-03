@@ -679,6 +679,93 @@ def _build_schema_hint_for_tables(table_names: list[str]) -> str:
     return "\n".join(lines)
 
 
+# ── LLM Reviewer（語意審查）─────────────────────────────────────────
+
+def _llm_review(
+    sql: str,
+    registry,          # BlockRegistry
+    known_errors: list[str],
+    model: str,
+) -> tuple[dict[str, list[str]], dict[str, int]]:
+    """
+    One-shot global semantic review of the full SQL.
+    Returns ({block_name: [issue, ...]}, tokens).
+    known_errors: rule-based errors already found — reviewer skips duplicates.
+    """
+    import json as _json
+    from .generator import _chat
+    from .block_registry import BlockRegistry
+
+    block_lines = []
+    for b in registry.blocks:
+        deps = (", ".join(sorted(b.depends_on))) or "—"
+        outs = (", ".join(sorted(b.outputs))) or "—"
+        tables = (", ".join(sorted(b.real_tables))) or "—"
+        block_lines.append(
+            f"  [{b.name}]\n"
+            f"    tables: {tables}\n"
+            f"    outputs: {outs}\n"
+            f"    depends_on: {deps}"
+        )
+
+    known_text = "\n".join(f"  {e}" for e in known_errors) if known_errors else "  （無）"
+
+    resp = _chat(
+        model,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "你是 Oracle SQL 語意審查專家，負責找出 rule-based 無法偵測的語意與業務邏輯問題。\n\n"
+                    "【審查重點】\n"
+                    "- JOIN 條件完整性：兩表以帳戶關聯必須同時含 acct_nbr + prod_type_code；"
+                    "以個人關聯必須同時含 party_id + branch_code。只用其中一個鍵會造成資料膨脹。\n"
+                    "- GROUP BY 一致性：SELECT 出現的非聚合欄位都必須出現在 GROUP BY。\n"
+                    "- CTE 欄位契約：下游 block 引用的欄位必須在上游 CTE 有輸出。\n"
+                    "- 聚合粒度：確認 SUM/COUNT 的粒度與需求一致，沒有重複計算或遺漏 JOIN。\n"
+                    "- 日期篩選：有日期欄位的表格通常需要篩選 snap_date 或 snap_yyyymm 以限制資料量。\n\n"
+                    "【不要回報】\n"
+                    "- 語法錯誤、schema prefix 缺失、幻覺欄位（rule checker 已處理）\n"
+                    "- 已在【已知錯誤】中提到的問題\n\n"
+                    "【輸出格式】只輸出 JSON，不要任何說明或 markdown fence。\n"
+                    "key = block name（如 \"cte:acct_base\" 或 \"final_select\"），"
+                    "value = 問題描述 list（繁體中文）。\n"
+                    "沒有語意問題時輸出 {}。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"【已知 rule 錯誤（不需重複回報）】\n{known_text}\n\n"
+                    f"【Block 結構】\n" + "\n".join(block_lines) + "\n\n"
+                    f"【完整 SQL】\n{sql}"
+                ),
+            },
+        ],
+        temperature=0,
+    )
+
+    raw = (resp.choices[0].message.content or "").strip()
+    for fence in ("```json", "```"):
+        if raw.startswith(fence):
+            raw = raw[len(fence):]
+    raw = raw.strip("`").strip()
+
+    issues: dict[str, list[str]] = {}
+    try:
+        parsed = _json.loads(raw)
+        if isinstance(parsed, dict):
+            issues = {k: v for k, v in parsed.items() if isinstance(v, list) and v}
+    except Exception:
+        pass
+
+    tokens = {
+        "review_in": resp.usage.prompt_tokens,
+        "review_out": resp.usage.completion_tokens,
+    }
+    return issues, tokens
+
+
 # ── Block-level rewrite ──────────────────────────────────────────────
 
 def _rewrite_block(
@@ -833,13 +920,15 @@ def validate_and_fix(
     回傳 (final_sql, log, total_tokens)。
 
     log 每筆格式：
-      {"auto_fixes": [...]}          — 第一筆（若有 SYSDATE 自動修正）
-      {"round": int, "errors": list[str], "passed": bool}
+      {"auto_fixes": [...]}          — 每輪若有 SYSDATE 自動修正
+      {"round": int, "errors": list[str], "semantic": dict, "passed": bool}
         errors 每條帶 [block=<name>] 前綴（可歸因時）
+        semantic: {block_name: [語意問題, ...]}（round 1 LLM Reviewer 結果）
 
     修正策略：
-      1. 可歸因到 block 的 error → BlockRewriter 逐 block 修
-      2. 無法歸因的 error → _fix_with_llm 整份 SQL fallback
+      1. 可歸因到 block 的 rule error + 語意問題 → BlockRewriter 逐 block 修
+      2. 無法歸因的 rule error → _fix_with_llm 整份 SQL fallback
+      3. round 1 結束後跑 LLM Reviewer；round 2+ 只跑 rule check
     """
     import re as _re
     from .block_registry import BlockRegistry, apply_replacements
@@ -849,7 +938,7 @@ def validate_and_fix(
     log: list[dict] = []
 
     for i in range(max_iter):
-        # #7: run SYSDATE auto-fix every round so BlockRewriter-generated SYSDATE patterns are caught
+        # run SYSDATE auto-fix every round
         sql, auto_fixes = _fix_sysdate(sql)
         if auto_fixes:
             log.append({"auto_fixes": auto_fixes})
@@ -859,10 +948,18 @@ def validate_and_fix(
         registry = BlockRegistry(sql)
         tagged = registry.tag_errors(errors)
 
-        passed = len(errors) == 0
-        log.append({"round": i + 1, "errors": tagged, "passed": passed})
+        # LLM Reviewer: one global semantic review on round 1 only
+        semantic: dict[str, list[str]] = {}
+        if i == 0:
+            semantic, rev_tokens = _llm_review(sql, registry, errors, model)
+            for k, v in rev_tokens.items():
+                total_tokens[k] = total_tokens.get(k, 0) + v
 
-        if passed:
+        rule_passed = len(errors) == 0
+        repair_needed = not rule_passed or bool(semantic)
+        log.append({"round": i + 1, "errors": tagged, "semantic": semantic, "passed": rule_passed})
+
+        if not repair_needed:
             break
 
         # Partition: errors attributed to a block vs unattributed
@@ -874,6 +971,11 @@ def validate_and_fix(
                 block_errors.setdefault(m.group(1), []).append(m.group(2))
             else:
                 untagged.append(err)
+
+        # Merge semantic issues into block_errors (tagged so BlockRewriter sees them)
+        for block_name, issues in semantic.items():
+            for issue in issues:
+                block_errors.setdefault(block_name, []).append(f"[語意審查] {issue}")
 
         replacements: list[tuple[int, int, str]] = []
 

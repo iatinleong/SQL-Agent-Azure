@@ -647,21 +647,27 @@ def _confirm_and_generate(pending: dict) -> None:
         has_auto_fix = any(e.get("auto_fixes") for e in step_c_log)
         validation_entries = [e for e in step_c_log if "round" in e]
         all_ok = all(e.get("passed", True) for e in validation_entries)
+        has_semantic = any(e.get("semantic") for e in validation_entries)
         icon = "⚠️ 已自動修正" if has_auto_fix and all_ok else ("✅ 通過" if all_ok else "❌ 有問題")
         label = f"Step B：驗證　{icon}"
-        with st.expander(label, expanded=has_auto_fix or not all_ok):
+        with st.expander(label, expanded=has_auto_fix or not all_ok or has_semantic):
             st.code(_clean_sql(gen.step_a_sql), language="sql")
             for entry in step_c_log:
                 for fix_msg in entry.get("auto_fixes", []):
                     st.info(fix_msg)
                 if "round" not in entry:
                     continue
-                if entry.get("passed"):
+                if entry.get("passed") and not entry.get("semantic"):
                     st.success(f"Round {entry['round']}：驗證通過")
+                elif entry.get("passed") and entry.get("semantic"):
+                    st.success(f"Round {entry['round']}：rule 通過")
                 else:
                     st.warning(f"Round {entry['round']}：發現 {len(entry['errors'])} 個問題，已送 LLM 修正")
                     for err in entry["errors"]:
                         st.code(err, language="text")
+                for block_name, issues in (entry.get("semantic") or {}).items():
+                    for issue in issues:
+                        st.info(f"[語意審查 {block_name}] {issue}")
 
     st.markdown('<div class="sa-sql-label">最終 SQL</div>', unsafe_allow_html=True)
     st.code(_clean_sql(gen.final_sql), language="sql")
@@ -1092,12 +1098,17 @@ def _render_turn(turn: Turn, idx: int):
                                 st.info(fix_msg)
                             if "round" not in entry:
                                 continue
-                            if entry.get("passed"):
+                            if entry.get("passed") and not entry.get("semantic"):
                                 st.success(f"Round {entry['round']}：驗證通過")
+                            elif entry.get("passed") and entry.get("semantic"):
+                                st.success(f"Round {entry['round']}：rule 通過")
                             else:
                                 st.warning(f"Round {entry['round']}：{len(entry['errors'])} 個問題")
                                 for err in entry["errors"]:
                                     st.code(err, language="text")
+                            for block_name, issues in (entry.get("semantic") or {}).items():
+                                for issue in issues:
+                                    st.info(f"[語意審查 {block_name}] {issue}")
             elif log.strip():
                 with st.expander(label, expanded=False):
                     st.markdown(log)

@@ -579,12 +579,19 @@ def generate(
             for msg in entry["auto_fixes"]:
                 print(f"  [auto-fix] {msg}")
             continue
-        if entry["passed"]:
+        rule_ok = entry["passed"]
+        semantic = entry.get("semantic") or {}
+        if rule_ok and not semantic:
             print(f"  Round {entry['round']}：✅ 通過")
+        elif rule_ok and semantic:
+            print(f"  Round {entry['round']}：rule ✅  語意審查發現問題")
         else:
             print(f"  Round {entry['round']}：❌ {len(entry['errors'])} 個問題")
             for e in entry["errors"]:
                 print(f"    {e}")
+        for block_name, issues in semantic.items():
+            for iss in issues:
+                print(f"    [語意 {block_name}] {iss}")
 
     print(f"\n{WIDE_SEP}")
     print("=== 最終 SQL ===")
