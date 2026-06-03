@@ -472,7 +472,7 @@ def _check_data_redaction(sql: str) -> list[str]:
 
 # ── SYSDATE 時效自動修正 ──────────────────────────────────────────────
 
-def _fix_sysdate(sql: str) -> str:
+def _fix_sysdate(sql: str) -> tuple[str, list[str]]:
     """資料庫每日 T-1 更新：自動將 SQL 中指向今日的日期表達式改為昨日。
     修正範圍（只作用於非 -- 注解部分）：
       = SYSDATE           →  = SYSDATE-1
@@ -480,6 +480,7 @@ def _fix_sysdate(sql: str) -> str:
       DATE 'YYYY-MM-DD'   →  DATE 'YYYY-MM-DD' (yesterday)
       'YYYY-MM-DD'        →  'YYYY-MM-DD' (yesterday)
       'YYYYMMDD'          →  'YYYYMMDD' (yesterday)
+    回傳 (fixed_sql, notices)，notices 為非空時表示有自動修正。
     """
     import re
     from datetime import date, timedelta
@@ -491,17 +492,29 @@ def _fix_sysdate(sql: str) -> str:
     ymd_y = yesterday.strftime("%Y-%m-%d")
     ymd8_y = yesterday.strftime("%Y%m%d")
 
+    applied: set[str] = set()
+
     def _fix_code(code: str) -> str:
         # 1. = SYSDATE (not already offset)
-        code = re.sub(r'(=\s*)SYSDATE\b(?!\s*[-+])', r'\1SYSDATE-1', code, flags=re.IGNORECASE)
+        new, n = re.subn(r'(=\s*)SYSDATE\b(?!\s*[-+])', r'\1SYSDATE-1', code, flags=re.IGNORECASE)
+        if n: applied.add("sysdate")
+        code = new
         # 2. = TRUNC(SYSDATE) (not already offset)
-        code = re.sub(r'(=\s*TRUNC\s*\(\s*SYSDATE\s*\))(?!\s*[-+])', r'\1-1', code, flags=re.IGNORECASE)
+        new, n = re.subn(r'(=\s*TRUNC\s*\(\s*SYSDATE\s*\))(?!\s*[-+])', r'\1-1', code, flags=re.IGNORECASE)
+        if n: applied.add("trunc_sysdate")
+        code = new
         # 3. DATE 'today' → DATE 'yesterday'  (must run before bare-string rule)
-        code = re.sub(rf"(DATE\s+'){re.escape(ymd)}'", rf"\g<1>{ymd_y}'", code, flags=re.IGNORECASE)
+        new, n = re.subn(rf"(DATE\s+'){re.escape(ymd)}'", rf"\g<1>{ymd_y}'", code, flags=re.IGNORECASE)
+        if n: applied.add("date_literal")
+        code = new
         # 4. standalone 'YYYY-MM-DD' today
-        code = code.replace(f"'{ymd}'", f"'{ymd_y}'")
+        if f"'{ymd}'" in code:
+            applied.add("date_literal")
+            code = code.replace(f"'{ymd}'", f"'{ymd_y}'")
         # 5. 'YYYYMMDD' today
-        code = code.replace(f"'{ymd8}'", f"'{ymd8_y}'")
+        if f"'{ymd8}'" in code:
+            applied.add("date8_literal")
+            code = code.replace(f"'{ymd8}'", f"'{ymd8_y}'")
         return code
 
     lines = []
@@ -511,7 +524,16 @@ def _fix_sysdate(sql: str) -> str:
             lines.append(_fix_code(line[:m.start()]) + line[m.start():])
         else:
             lines.append(_fix_code(line))
-    return '\n'.join(lines)
+
+    notices: list[str] = []
+    if "sysdate" in applied:
+        notices.append(f"[資料時效自動修正] SYSDATE → SYSDATE-1（資料庫最新只到昨日 T-1）")
+    if "trunc_sysdate" in applied:
+        notices.append(f"[資料時效自動修正] TRUNC(SYSDATE) → TRUNC(SYSDATE)-1")
+    if "date_literal" in applied or "date8_literal" in applied:
+        notices.append(f"[資料時效自動修正] 今日日期 {ymd} → 昨日 {ymd_y}（T-1）")
+
+    return '\n'.join(lines), notices
 
 
 # ── 全套錯誤收集 ────────────────────────────────────────────────────
@@ -656,9 +678,11 @@ def validate_and_fix(
     回傳 (final_sql, log, total_tokens)。
     log 每筆：{"round": int, "errors": list[str], "passed": bool}
     """
-    sql = _fix_sysdate(_clean(sql))
+    sql, auto_fixes = _fix_sysdate(_clean(sql))
     total_tokens: dict[str, int] = {}
     log: list[dict] = []
+    if auto_fixes:
+        log.append({"auto_fixes": auto_fixes})
 
     for i in range(max_iter):
         errors = _collect_all_errors(sql)

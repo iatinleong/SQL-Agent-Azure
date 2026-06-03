@@ -644,15 +644,22 @@ def _confirm_and_generate(pending: dict) -> None:
     # Step B：全套驗證結果
     step_c_log = gen.step_c_log
     if step_c_log:
-        all_ok = all(e.get("passed", True) for e in step_c_log)
-        label = f"Step B：驗證　{'✅ 通過' if all_ok else '❌ 有問題'}"
-        with st.expander(label, expanded=not all_ok):
+        has_auto_fix = any(e.get("auto_fixes") for e in step_c_log)
+        validation_entries = [e for e in step_c_log if "round" in e]
+        all_ok = all(e.get("passed", True) for e in validation_entries)
+        icon = "⚠️ 已自動修正" if has_auto_fix and all_ok else ("✅ 通過" if all_ok else "❌ 有問題")
+        label = f"Step B：驗證　{icon}"
+        with st.expander(label, expanded=has_auto_fix or not all_ok):
             st.code(_clean_sql(gen.step_a_sql), language="sql")
             for entry in step_c_log:
+                for fix_msg in entry.get("auto_fixes", []):
+                    st.info(fix_msg)
+                if "round" not in entry:
+                    continue
                 if entry.get("passed"):
-                    st.success(f"Round {entry.get('round', '?')}：驗證通過")
+                    st.success(f"Round {entry['round']}：驗證通過")
                 else:
-                    st.warning(f"Round {entry.get('round', '?')}：發現 {len(entry['errors'])} 個問題，已送 LLM 修正")
+                    st.warning(f"Round {entry['round']}：發現 {len(entry['errors'])} 個問題，已送 LLM 修正")
                     for err in entry["errors"]:
                         st.code(err, language="text")
 
@@ -1073,16 +1080,22 @@ def _render_turn(turn: Turn, idx: int):
         for label, log in log_sections:
             if label == "Step B：驗證":
                 if log:
-                    all_ok = all(e.get("passed", True) for e in log)
-                    icon = "✅" if all_ok else "❌"
+                    has_auto_fix = any(e.get("auto_fixes") for e in log)
+                    validation_entries = [e for e in log if "round" in e]
+                    all_ok = all(e.get("passed", True) for e in validation_entries)
+                    icon = "⚠️" if has_auto_fix and all_ok else ("✅" if all_ok else "❌")
                     with st.expander(f"{label}　{icon}", expanded=False):
                         if turn.step_a_sql:
                             st.code(_clean_sql(turn.step_a_sql), language="sql")
                         for entry in log:
+                            for fix_msg in entry.get("auto_fixes", []):
+                                st.info(fix_msg)
+                            if "round" not in entry:
+                                continue
                             if entry.get("passed"):
-                                st.success(f"Round {entry.get('round', '?')}：驗證通過")
+                                st.success(f"Round {entry['round']}：驗證通過")
                             else:
-                                st.warning(f"Round {entry.get('round', '?')}：{len(entry['errors'])} 個問題")
+                                st.warning(f"Round {entry['round']}：{len(entry['errors'])} 個問題")
                                 for err in entry["errors"]:
                                     st.code(err, language="text")
             elif log.strip():
