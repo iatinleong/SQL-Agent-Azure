@@ -470,6 +470,21 @@ def _check_data_redaction(sql: str) -> list[str]:
     return errors
 
 
+# ── SYSDATE 時效檢查 ─────────────────────────────────────────────────
+
+def _check_sysdate(sql: str) -> list[str]:
+    """偵測裸 SYSDATE 做等值比較（= SYSDATE 未加 -1），快照資料最新只到 T-1。"""
+    import re
+    # 匹配 = SYSDATE 且後方沒有緊接 - 或 + 的算術運算
+    pattern = re.compile(r'=\s*SYSDATE\b(?!\s*[-+])', re.IGNORECASE)
+    if pattern.search(sql):
+        return [
+            "[資料時效] 偵測到 = SYSDATE：資料庫快照最新只到昨日（T-1），"
+            "請改為 = SYSDATE-1，否則查詢結果為空"
+        ]
+    return []
+
+
 # ── 全套錯誤收集 ────────────────────────────────────────────────────
 
 def _collect_all_errors(sql: str) -> list[str]:
@@ -482,6 +497,7 @@ def _collect_all_errors(sql: str) -> list[str]:
 
     errors: list[str] = []
     errors += _check_data_redaction(sql)
+    errors += _check_sysdate(sql)
     errors += _check_oracle_quirks(sql)
     errors += _check_dm_s_view_prefix(sql)
     errors += check_hallucination(sql)
@@ -571,7 +587,9 @@ def _fix_with_llm(sql: str, errors: list[str], model: str, schema_hint: str = ""
                     "直接 SELECT party_id_mask；若無，則 JOIN DM_S_VIEW.M_AC_ACCOUNT ON "
                     "<主表>.party_id = M_AC_ACCOUNT.party_id，再 SELECT M_AC_ACCOUNT.party_id_mask。\n"
                     "3. party_id 與 party_id_mask 數值不同，不可互換：JOIN / WHERE / IN 條件一律用 party_id；"
-                    "禁止用 party_id_mask 去比對或 JOIN 其他表格的 party_id。"
+                    "禁止用 party_id_mask 去比對或 JOIN 其他表格的 party_id。\n\n"
+                    "【資料時效】資料庫快照最新只到昨日（T-1）：快照欄位（SNAP_DATE、SNAP_YYYYMM 等）"
+                    "做等值篩選時一律用 SYSDATE-1，禁止直接使用裸 SYSDATE（會查到 0 筆）。"
                 ),
             },
             {
