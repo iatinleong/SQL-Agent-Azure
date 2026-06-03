@@ -737,7 +737,9 @@ def _llm_review(
                     "- 已在【已知錯誤】中提到的問題\n\n"
                     "【輸出格式】只輸出 JSON，不要任何說明或 markdown fence。\n"
                     "key 必須是以下 block name 之一：" + "、".join(sorted(valid_block_names)) + "\n"
-                    "value = 問題描述 list（繁體中文）。沒有語意問題時輸出 {}。"
+                    "value = 具體問題描述 list（繁體中文）。\n"
+                    "重要：只列出有實際問題的 block；沒有問題的 block 完全不要出現在 JSON。\n"
+                    "若整份 SQL 均無語意問題，直接輸出 {}，禁止填入任何確認或說明訊息。"
                 ),
             },
             {
@@ -763,15 +765,23 @@ def _llm_review(
             raw = raw[len(fence):]
     raw = raw.strip("`").strip()
 
+    _NO_ISSUE_MARKERS = ("未見", "無問題", "沒有問題", "no issue", "no problem")
+
+    def _is_real_issue(msg: str) -> bool:
+        low = msg.lower()
+        return not any(m in low for m in _NO_ISSUE_MARKERS)
+
     issues: dict[str, list[str]] = {}
     try:
         parsed = _json.loads(raw)
         if isinstance(parsed, dict):
-            # #5: only keep block names that actually exist in registry
+            # only keep blocks with actual issues; filter out "no issue" confirmations
             issues = {
-                k: v for k, v in parsed.items()
+                k: [m for m in v if _is_real_issue(m)]
+                for k, v in parsed.items()
                 if isinstance(v, list) and v and k in valid_block_names
             }
+            issues = {k: v for k, v in issues.items() if v}  # drop now-empty lists
     except Exception:
         # #4: surface parse failure so callers can log it
         issues = {"__parse_error__": [f"Reviewer 回傳非 JSON：{raw[:200]}"]}
