@@ -470,19 +470,48 @@ def _check_data_redaction(sql: str) -> list[str]:
     return errors
 
 
-# ── SYSDATE 時效檢查 ─────────────────────────────────────────────────
+# ── SYSDATE 時效自動修正 ──────────────────────────────────────────────
 
-def _check_sysdate(sql: str) -> list[str]:
-    """偵測裸 SYSDATE 做等值比較（= SYSDATE 未加 -1），快照資料最新只到 T-1。"""
+def _fix_sysdate(sql: str) -> str:
+    """資料庫每日 T-1 更新：自動將 SQL 中指向今日的日期表達式改為昨日。
+    修正範圍（只作用於非 -- 注解部分）：
+      = SYSDATE           →  = SYSDATE-1
+      = TRUNC(SYSDATE)    →  = TRUNC(SYSDATE)-1
+      DATE 'YYYY-MM-DD'   →  DATE 'YYYY-MM-DD' (yesterday)
+      'YYYY-MM-DD'        →  'YYYY-MM-DD' (yesterday)
+      'YYYYMMDD'          →  'YYYYMMDD' (yesterday)
+    """
     import re
-    # 匹配 = SYSDATE 且後方沒有緊接 - 或 + 的算術運算
-    pattern = re.compile(r'=\s*SYSDATE\b(?!\s*[-+])', re.IGNORECASE)
-    if pattern.search(sql):
-        return [
-            "[資料時效] 偵測到 = SYSDATE：資料庫快照最新只到昨日（T-1），"
-            "請改為 = SYSDATE-1，否則查詢結果為空"
-        ]
-    return []
+    from datetime import date, timedelta
+
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+    ymd = today.strftime("%Y-%m-%d")
+    ymd8 = today.strftime("%Y%m%d")
+    ymd_y = yesterday.strftime("%Y-%m-%d")
+    ymd8_y = yesterday.strftime("%Y%m%d")
+
+    def _fix_code(code: str) -> str:
+        # 1. = SYSDATE (not already offset)
+        code = re.sub(r'(=\s*)SYSDATE\b(?!\s*[-+])', r'\1SYSDATE-1', code, flags=re.IGNORECASE)
+        # 2. = TRUNC(SYSDATE) (not already offset)
+        code = re.sub(r'(=\s*TRUNC\s*\(\s*SYSDATE\s*\))(?!\s*[-+])', r'\1-1', code, flags=re.IGNORECASE)
+        # 3. DATE 'today' → DATE 'yesterday'  (must run before bare-string rule)
+        code = re.sub(rf"(DATE\s+'){re.escape(ymd)}'", rf"\g<1>{ymd_y}'", code, flags=re.IGNORECASE)
+        # 4. standalone 'YYYY-MM-DD' today
+        code = code.replace(f"'{ymd}'", f"'{ymd_y}'")
+        # 5. 'YYYYMMDD' today
+        code = code.replace(f"'{ymd8}'", f"'{ymd8_y}'")
+        return code
+
+    lines = []
+    for line in sql.split('\n'):
+        m = re.search(r'--', line)
+        if m:
+            lines.append(_fix_code(line[:m.start()]) + line[m.start():])
+        else:
+            lines.append(_fix_code(line))
+    return '\n'.join(lines)
 
 
 # ── 全套錯誤收集 ────────────────────────────────────────────────────
@@ -497,7 +526,6 @@ def _collect_all_errors(sql: str) -> list[str]:
 
     errors: list[str] = []
     errors += _check_data_redaction(sql)
-    errors += _check_sysdate(sql)
     errors += _check_oracle_quirks(sql)
     errors += _check_dm_s_view_prefix(sql)
     errors += check_hallucination(sql)
@@ -628,7 +656,7 @@ def validate_and_fix(
     回傳 (final_sql, log, total_tokens)。
     log 每筆：{"round": int, "errors": list[str], "passed": bool}
     """
-    sql = _clean(sql)
+    sql = _fix_sysdate(_clean(sql))
     total_tokens: dict[str, int] = {}
     log: list[dict] = []
 
