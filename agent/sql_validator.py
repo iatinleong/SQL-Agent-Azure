@@ -723,10 +723,27 @@ def _rewrite_block(
                         if is_final else
                         "只輸出修正後的 CTE body SQL（括號內的 SELECT 語句），不要說明，不要 markdown fence。\n"
                     )
-                    + "嚴格遵守：禁止移除或改名【必須保留的輸出欄位】中列出的欄位。\n"
-                    + "【Schema 規則】所有表格加 DM_S_VIEW. 前綴（已有其他前綴除外）。\n"
-                    + "【Oracle 語法】Oracle 19c+，禁用其他方言。\n"
-                    + "【Data Redaction】最終 SELECT 禁止輸出 party_id；CTE 內可保留作 JOIN/GROUP key。"
+                    + "嚴格遵守：禁止移除或改名【必須保留的輸出欄位】中列出的欄位。\n\n"
+                    + "【Schema 規則】所有表格一律加上 DM_S_VIEW schema 前綴"
+                    "（例如 DM_S_VIEW.M_AC_ACCOUNT），"
+                    "唯一例外：表格名稱本身已含有其他 schema 前綴則保持原樣。\n\n"
+                    + "【Oracle 語法】使用 Oracle 19c+ 語法，"
+                    "禁用其他資料庫方言（MySQL 的 LIMIT、PostgreSQL 的 ILIKE 等）。\n\n"
+                    + "【Data Redaction】party_id 受 Oracle Data Redaction 保護：\n"
+                    "1. 最終報表 SELECT（最外層）禁止輸出 party_id；"
+                    "CTE / subquery 內可保留 party_id 作為 JOIN / GROUP BY key，不需移除。\n"
+                    "2. 需顯示個人識別碼時改用 party_id_mask：若來源表已有 party_id_mask 欄位，"
+                    "直接 SELECT party_id_mask；若無，則 JOIN DM_S_VIEW.M_AC_ACCOUNT ON "
+                    "<主表>.party_id = M_AC_ACCOUNT.party_id，再 SELECT M_AC_ACCOUNT.party_id_mask。\n"
+                    "3. party_id 與 party_id_mask 數值不同，不可互換：JOIN / WHERE / IN 條件一律用 party_id；"
+                    "禁止用 party_id_mask 去比對或 JOIN 其他表格的 party_id。\n"
+                    "4. party_id_mask 是加密識別碼，禁止 alias 成姓名欄位（如 AS \"客戶姓名\"）；"
+                    "若姓名來源表不存在，請將姓名欄位移除，不可用 party_id_mask 代替。\n\n"
+                    + "【資料時效】整個資料庫每日 T-1 更新：所有日期欄位的最新可用資料為昨日（SYSDATE-1）。"
+                    "使用者說「今天」一律解讀為昨日；禁止以今日日期（SYSDATE 或等於今日的 DATE literal）"
+                    "作為篩選上限，否則查詢結果為空。"
+                    "取最新 SNAP_YYYYMM 時使用 TO_CHAR(TRUNC(SYSDATE-1,'MM'),'YYYYMM')；"
+                    "禁止用 ADD_MONTHS(TRUNC(SYSDATE,'MM'),-1)，那會得到上個月而非最新月份。"
                 ),
             },
             {"role": "user", "content": "\n\n".join(parts)},
@@ -827,13 +844,16 @@ def validate_and_fix(
     import re as _re
     from .block_registry import BlockRegistry, apply_replacements
 
-    sql, auto_fixes = _fix_sysdate(_clean(sql))
+    sql = _clean(sql)
     total_tokens: dict[str, int] = {}
     log: list[dict] = []
-    if auto_fixes:
-        log.append({"auto_fixes": auto_fixes})
 
     for i in range(max_iter):
+        # #7: run SYSDATE auto-fix every round so BlockRewriter-generated SYSDATE patterns are caught
+        sql, auto_fixes = _fix_sysdate(sql)
+        if auto_fixes:
+            log.append({"auto_fixes": auto_fixes})
+
         errors = _collect_all_errors(sql)
 
         registry = BlockRegistry(sql)
@@ -886,8 +906,11 @@ def validate_and_fix(
 
         if replacements:
             sql = apply_replacements(sql, replacements)
+            # #5: block repairs were applied this round — skip whole-SQL fallback to avoid
+            # overwriting the spliced blocks; untagged errors will surface next round
+            continue
 
-        # Fallback: whole-SQL fix for unattributed errors
+        # Fallback: whole-SQL fix for unattributed errors (only when no block repairs this round)
         if untagged:
             has_hallucination = any("[幻覺]" in e for e in untagged)
             has_redaction = any("[Data Redaction]" in e for e in untagged)
