@@ -351,9 +351,11 @@ def _get_direct_real_tables(select_node, cte_names: set[str]) -> set[str]:
 
 
 def _check_data_redaction(sql: str) -> list[str]:
-    """偵測 SELECT 中出現 party_id 並給出修正建議：
-    - 若來源表已有 party_id_mask 欄位 → 直接替換為 party_id_mask
-    - 否則 → JOIN DM_S_VIEW.M_AC_ACCOUNT 取得 party_id_mask
+    """偵測最終報表 SELECT（最外層）輸出 party_id，以及全域的 party_id/party_id_mask 互比。
+    CTE / subquery 內的 party_id 作為 JOIN/GROUP key 不報錯。
+    - final SELECT 含 party_id 且來源表有 party_id_mask → 建議直接替換
+    - final SELECT 含 party_id 且來源表無 party_id_mask → 建議 JOIN M_AC_ACCOUNT
+    - 全域：party_id = party_id_mask 互比 / IN 互比 → 報錯
     """
     try:
         import sqlglot
@@ -580,7 +582,10 @@ def _check_forbidden_tables(sql: str) -> list[str]:
 
 
 def _check_mask_misuse(sql: str) -> list[str]:
-    """偵測最終 SELECT 中 party_id_mask 被 alias 成非識別碼用途（如客戶姓名）。"""
+    """偵測最終 SELECT 中 party_id_mask 被 alias 成姓名類欄位（如客戶姓名）。
+    使用黑名單判斷：alias 含 姓名/名稱/NAME/CUSTOMER_NAME/CUST_NAME 才報錯，
+    正常的「識別碼/MASK/ID」等 alias 一律放行。
+    """
     try:
         import sqlglot
         from sqlglot import exp
@@ -588,7 +593,7 @@ def _check_mask_misuse(sql: str) -> list[str]:
     except Exception:
         return []
 
-    _MASK_KEYWORDS = ("MASK", "ID", "PARTY")
+    _NAME_KEYWORDS = ("姓名", "名稱", "NAME", "CUSTOMER_NAME", "CUST_NAME")
     errors: list[str] = []
     for select_node in tree.find_all(exp.Select):
         if _is_intermediate_select(select_node):
@@ -602,11 +607,11 @@ def _check_mask_misuse(sql: str) -> list[str]:
             if (col.name or "").upper() != "PARTY_ID_MASK":
                 continue
             alias = expr.alias or ""
-            if not any(kw in alias.upper() for kw in _MASK_KEYWORDS):
+            if any(kw in alias.upper() for kw in _NAME_KEYWORDS):
                 errors.append(
                     f"[語意錯誤] party_id_mask 不可 alias 為 \"{alias}\"："
-                    "party_id_mask 是加密識別碼，非姓名或顯示欄位；"
-                    "請移除此欄位或改用正確來源"
+                    "party_id_mask 是加密識別碼，非客戶姓名；"
+                    "請改為 NULL AS \"{alias}\" 並說明姓名因隱私不可查"
                 )
     return errors
 
@@ -717,8 +722,9 @@ def _fix_with_llm(sql: str, errors: list[str], model: str, schema_hint: str = ""
                     "3. party_id 與 party_id_mask 數值不同，不可互換：JOIN / WHERE / IN 條件一律用 party_id；"
                     "禁止用 party_id_mask 去比對或 JOIN 其他表格的 party_id。\n"
                     "4. party_id_mask 是加密識別碼，禁止 alias 成姓名欄位（如 AS \"客戶姓名\"）；"
-                    "若姓名來源表不存在，請將姓名欄位改為 NULL AS \"客戶姓名\" 或直接移除，不可用 party_id_mask 代替。\n\n"
-                    "【隱私政策】禁止使用 PARTY_NAME 表格（任何 schema 下），請從 SQL 中完整移除。\n\n"
+                    "若姓名來源表不存在或被禁用，一律改為 NULL AS \"客戶姓名\"，並加註解說明原因，不可用 party_id_mask 代替。\n\n"
+                    "【隱私政策】禁止使用 PARTY_NAME 表格（任何 schema 下）：移除對該表的所有 JOIN，"
+                    "並將姓名欄位改為 NULL AS \"客戶姓名\" -- 隱私規定不可查詢。\n\n"
                     "【資料時效】整個資料庫每日 T-1 更新：所有日期欄位的最新可用資料為昨日（SYSDATE-1）。"
                     "使用者說「今天」一律解讀為昨日；禁止以今日日期（SYSDATE 或等於今日的 DATE literal）"
                     "作為篩選上限，否則查詢結果為空。"
