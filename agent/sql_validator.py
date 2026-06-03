@@ -691,10 +691,14 @@ def _llm_review(
     One-shot global semantic review of the full SQL.
     Returns ({block_name: [issue, ...]}, tokens).
     known_errors: rule-based errors already found — reviewer skips duplicates.
+
+    #2: caller must ensure SQL has no parse/hallucination errors before calling;
+        reviewing broken SQL produces unreliable semantic judgments.
     """
     import json as _json
     from .generator import _chat
-    from .block_registry import BlockRegistry
+
+    valid_block_names = {b.name for b in registry.blocks}
 
     block_lines = []
     for b in registry.blocks:
@@ -718,19 +722,22 @@ def _llm_review(
                 "content": (
                     "你是 Oracle SQL 語意審查專家，負責找出 rule-based 無法偵測的語意與業務邏輯問題。\n\n"
                     "【審查重點】\n"
-                    "- JOIN 條件完整性：兩表以帳戶關聯必須同時含 acct_nbr + prod_type_code；"
-                    "以個人關聯必須同時含 party_id + branch_code。只用其中一個鍵會造成資料膨脹。\n"
+                    "- JOIN 條件完整性：\n"
+                    "  • 帳戶關聯（涉及 acct_nbr）必須同時包含 acct_nbr + prod_type_code，"
+                    "只用 acct_nbr 會導致跨商品膨脹。\n"
+                    "  • 個人關聯通常使用 party_id；若兩張表都有 branch_code 且需求要求分公司粒度，"
+                    "JOIN 條件應同時包含 branch_code。不是每張表都有 branch_code，不要強制要求。\n"
+                    "  • 禁止用 party_id_mask 作為 JOIN key（數值與 party_id 不同）。\n"
                     "- GROUP BY 一致性：SELECT 出現的非聚合欄位都必須出現在 GROUP BY。\n"
                     "- CTE 欄位契約：下游 block 引用的欄位必須在上游 CTE 有輸出。\n"
                     "- 聚合粒度：確認 SUM/COUNT 的粒度與需求一致，沒有重複計算或遺漏 JOIN。\n"
-                    "- 日期篩選：有日期欄位的表格通常需要篩選 snap_date 或 snap_yyyymm 以限制資料量。\n\n"
+                    "- 日期篩選：有快照日期欄位的表格通常需要篩選 snap_date 或 snap_yyyymm。\n\n"
                     "【不要回報】\n"
                     "- 語法錯誤、schema prefix 缺失、幻覺欄位（rule checker 已處理）\n"
                     "- 已在【已知錯誤】中提到的問題\n\n"
                     "【輸出格式】只輸出 JSON，不要任何說明或 markdown fence。\n"
-                    "key = block name（如 \"cte:acct_base\" 或 \"final_select\"），"
-                    "value = 問題描述 list（繁體中文）。\n"
-                    "沒有語意問題時輸出 {}。"
+                    "key 必須是以下 block name 之一：" + "、".join(sorted(valid_block_names)) + "\n"
+                    "value = 問題描述 list（繁體中文）。沒有語意問題時輸出 {}。"
                 ),
             },
             {
@@ -745,6 +752,11 @@ def _llm_review(
         temperature=0,
     )
 
+    tokens = {
+        "review_in": resp.usage.prompt_tokens,
+        "review_out": resp.usage.completion_tokens,
+    }
+
     raw = (resp.choices[0].message.content or "").strip()
     for fence in ("```json", "```"):
         if raw.startswith(fence):
@@ -755,14 +767,15 @@ def _llm_review(
     try:
         parsed = _json.loads(raw)
         if isinstance(parsed, dict):
-            issues = {k: v for k, v in parsed.items() if isinstance(v, list) and v}
+            # #5: only keep block names that actually exist in registry
+            issues = {
+                k: v for k, v in parsed.items()
+                if isinstance(v, list) and v and k in valid_block_names
+            }
     except Exception:
-        pass
+        # #4: surface parse failure so callers can log it
+        issues = {"__parse_error__": [f"Reviewer 回傳非 JSON：{raw[:200]}"]}
 
-    tokens = {
-        "review_in": resp.usage.prompt_tokens,
-        "review_out": resp.usage.completion_tokens,
-    }
     return issues, tokens
 
 
@@ -948,16 +961,34 @@ def validate_and_fix(
         registry = BlockRegistry(sql)
         tagged = registry.tag_errors(errors)
 
-        # LLM Reviewer: one global semantic review on round 1 only
+        # LLM Reviewer: one global semantic review on round 1 only.
+        # #2: skip if SQL has parse/hallucination errors — reviewing broken SQL is unreliable.
+        _blocking_prefixes = ("[sqlglot]", "[幻覺]", "[schema prefix]", "[Oracle quirk]")
+        _has_structural_errors = any(
+            any(e.startswith(p) for p in _blocking_prefixes) for e in errors
+        )
         semantic: dict[str, list[str]] = {}
-        if i == 0:
+        if i == 0 and not _has_structural_errors:
             semantic, rev_tokens = _llm_review(sql, registry, errors, model)
             for k, v in rev_tokens.items():
                 total_tokens[k] = total_tokens.get(k, 0) + v
 
+        # #4: surface parse error from reviewer as a log warning, don't feed it to rewriter
+        review_parse_error: str | None = None
+        if "__parse_error__" in semantic:
+            review_parse_error = semantic.pop("__parse_error__")[0]
+
         rule_passed = len(errors) == 0
-        repair_needed = not rule_passed or bool(semantic)
-        log.append({"round": i + 1, "errors": tagged, "semantic": semantic, "passed": rule_passed})
+        semantic_passed = not bool(semantic)          # #3: separate semantic status
+        repair_needed = not rule_passed or not semantic_passed
+        log.append({
+            "round": i + 1,
+            "errors": tagged,
+            "semantic": semantic,
+            "passed": rule_passed,
+            "semantic_passed": semantic_passed,
+            **({"review_parse_error": review_parse_error} if review_parse_error else {}),
+        })
 
         if not repair_needed:
             break

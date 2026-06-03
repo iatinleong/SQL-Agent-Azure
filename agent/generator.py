@@ -580,15 +580,18 @@ def generate(
                 print(f"  [auto-fix] {msg}")
             continue
         rule_ok = entry["passed"]
+        sem_ok = entry.get("semantic_passed", True)
         semantic = entry.get("semantic") or {}
-        if rule_ok and not semantic:
+        if rule_ok and sem_ok:
             print(f"  Round {entry['round']}：✅ 通過")
-        elif rule_ok and semantic:
+        elif rule_ok and not sem_ok:
             print(f"  Round {entry['round']}：rule ✅  語意審查發現問題")
         else:
             print(f"  Round {entry['round']}：❌ {len(entry['errors'])} 個問題")
             for e in entry["errors"]:
                 print(f"    {e}")
+        if entry.get("review_parse_error"):
+            print(f"    [語意審查 parse error] {entry['review_parse_error']}")
         for block_name, issues in semantic.items():
             for iss in issues:
                 print(f"    [語意 {block_name}] {iss}")

@@ -646,7 +646,9 @@ def _confirm_and_generate(pending: dict) -> None:
     if step_c_log:
         has_auto_fix = any(e.get("auto_fixes") for e in step_c_log)
         validation_entries = [e for e in step_c_log if "round" in e]
-        all_ok = all(e.get("passed", True) for e in validation_entries)
+        all_rule_ok = all(e.get("passed", True) for e in validation_entries)
+        all_semantic_ok = all(e.get("semantic_passed", True) for e in validation_entries)
+        all_ok = all_rule_ok and all_semantic_ok
         has_semantic = any(e.get("semantic") for e in validation_entries)
         icon = "⚠️ 已自動修正" if has_auto_fix and all_ok else ("✅ 通過" if all_ok else "❌ 有問題")
         label = f"Step B：驗證　{icon}"
@@ -657,14 +659,18 @@ def _confirm_and_generate(pending: dict) -> None:
                     st.info(fix_msg)
                 if "round" not in entry:
                     continue
-                if entry.get("passed") and not entry.get("semantic"):
+                rule_ok = entry.get("passed", True)
+                sem_ok = entry.get("semantic_passed", True)
+                if rule_ok and sem_ok:
                     st.success(f"Round {entry['round']}：驗證通過")
-                elif entry.get("passed") and entry.get("semantic"):
+                elif rule_ok and not sem_ok:
                     st.success(f"Round {entry['round']}：rule 通過")
                 else:
                     st.warning(f"Round {entry['round']}：發現 {len(entry['errors'])} 個問題，已送 LLM 修正")
                     for err in entry["errors"]:
                         st.code(err, language="text")
+                if entry.get("review_parse_error"):
+                    st.warning(f"[語意審查] 回傳解析失敗：{entry['review_parse_error']}")
                 for block_name, issues in (entry.get("semantic") or {}).items():
                     for issue in issues:
                         st.info(f"[語意審查 {block_name}] {issue}")
@@ -1088,7 +1094,9 @@ def _render_turn(turn: Turn, idx: int):
                 if log:
                     has_auto_fix = any(e.get("auto_fixes") for e in log)
                     validation_entries = [e for e in log if "round" in e]
-                    all_ok = all(e.get("passed", True) for e in validation_entries)
+                    all_rule_ok = all(e.get("passed", True) for e in validation_entries)
+                    all_sem_ok = all(e.get("semantic_passed", True) for e in validation_entries)
+                    all_ok = all_rule_ok and all_sem_ok
                     icon = "⚠️" if has_auto_fix and all_ok else ("✅" if all_ok else "❌")
                     with st.expander(f"{label}　{icon}", expanded=False):
                         if turn.step_a_sql:
@@ -1098,14 +1106,18 @@ def _render_turn(turn: Turn, idx: int):
                                 st.info(fix_msg)
                             if "round" not in entry:
                                 continue
-                            if entry.get("passed") and not entry.get("semantic"):
+                            rule_ok = entry.get("passed", True)
+                            sem_ok = entry.get("semantic_passed", True)
+                            if rule_ok and sem_ok:
                                 st.success(f"Round {entry['round']}：驗證通過")
-                            elif entry.get("passed") and entry.get("semantic"):
+                            elif rule_ok and not sem_ok:
                                 st.success(f"Round {entry['round']}：rule 通過")
                             else:
                                 st.warning(f"Round {entry['round']}：{len(entry['errors'])} 個問題")
                                 for err in entry["errors"]:
                                     st.code(err, language="text")
+                            if entry.get("review_parse_error"):
+                                st.warning(f"[語意審查] 回傳解析失敗：{entry['review_parse_error']}")
                             for block_name, issues in (entry.get("semantic") or {}).items():
                                 for issue in issues:
                                     st.info(f"[語意審查 {block_name}] {issue}")
