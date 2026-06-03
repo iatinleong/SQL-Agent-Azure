@@ -588,8 +588,9 @@ def _fix_with_llm(sql: str, errors: list[str], model: str, schema_hint: str = ""
                     "<主表>.party_id = M_AC_ACCOUNT.party_id，再 SELECT M_AC_ACCOUNT.party_id_mask。\n"
                     "3. party_id 與 party_id_mask 數值不同，不可互換：JOIN / WHERE / IN 條件一律用 party_id；"
                     "禁止用 party_id_mask 去比對或 JOIN 其他表格的 party_id。\n\n"
-                    "【資料時效】資料庫快照最新只到昨日（T-1）：快照欄位（SNAP_DATE、SNAP_YYYYMM 等）"
-                    "做等值篩選時一律用 SYSDATE-1，禁止直接使用裸 SYSDATE（會查到 0 筆）。"
+                    "【資料時效】整個資料庫每日 T-1 更新：所有日期欄位的最新可用資料為昨日（SYSDATE-1）。"
+                    "使用者說「今天」一律解讀為昨日；禁止以今日日期（SYSDATE 或等於今日的 DATE literal）"
+                    "作為篩選上限，否則查詢結果為空。"
                 ),
             },
             {
