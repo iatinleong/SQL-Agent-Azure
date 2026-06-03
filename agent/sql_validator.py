@@ -525,8 +525,9 @@ def _fix_sysdate(sql: str) -> tuple[str, list[str]]:
         new, n = re.subn(r'(=\s*TRUNC\s*\(\s*SYSDATE\s*\))(?!\s*[-+])', r'\1-1', code, flags=re.IGNORECASE)
         if n: applied.add("trunc_sysdate")
         code = new
-        # 3. = SYSDATE-N (has offset, no TRUNC) → TRUNC for date accuracy
-        #    Matches "= SYSDATE - 1", ">= SYSDATE-7" etc.; skips "= TRUNC(SYSDATE)-1"
+        # 3. xSYSDATE-N (has offset, no TRUNC) → TRUNC for date accuracy
+        #    Works for =, >=, <= (all end with =); does NOT cover bare > or <.
+        #    Skips "= TRUNC(SYSDATE)-1" because = is not directly before SYSDATE there.
         new, n = re.subn(r'(=\s*)SYSDATE\b(\s*-\s*\d+)', r'\1TRUNC(SYSDATE)\2', code, flags=re.IGNORECASE)
         if n: applied.add("sysdate_trunc")
         code = new
