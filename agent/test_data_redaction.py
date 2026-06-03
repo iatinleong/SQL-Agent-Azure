@@ -16,9 +16,9 @@ def run_static_tests() -> int:
     cases = [
         # (描述, sql, 期望至少包含的錯誤關鍵字, 期望無錯)
         (
-            "SELECT party_id，來源表有 party_id_mask → 建議直接替換",
+            "SELECT party_id，來源表無 party_id_mask → 建議 JOIN M_AC_ACCOUNT",
             "SELECT c.party_id, c.cust_name FROM DM_S_VIEW.M_PT_CUSTOMER c",
-            ["禁止 SELECT c.party_id", "替換為 party_id_mask"],
+            ["禁止 SELECT c.party_id", "party_id_mask"],
             False,
         ),
         (
@@ -162,11 +162,16 @@ def run_fix_loop_tests() -> int:
         print(f"{SEP}\n📝  {desc}")
         final_sql, log, _ = validate_and_fix(bad_sql, model=VALIDATOR_MODEL)
 
-        last_round = log[-1]
-        final_errors = last_round["errors"]
-        ok = last_round["passed"]
+        round_entries = [e for e in log if "round" in e]
+        last_round = round_entries[-1] if round_entries else {"errors": [], "passed": False}
+        final_errors = last_round.get("errors", [])
+        ok = last_round.get("passed", False)
 
         for entry in log:
+            if "auto_fixes" in entry:
+                for msg in entry["auto_fixes"]:
+                    print(f"   [auto-fix] {msg}")
+                continue
             status = "✅" if entry["passed"] else f"❌ {len(entry['errors'])} 個問題"
             print(f"   Round {entry['round']}：{status}")
             if not entry["passed"]:
