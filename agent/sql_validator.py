@@ -491,13 +491,17 @@ def _check_data_redaction(sql: str) -> list[str]:
 # ── SYSDATE 時效自動修正 ──────────────────────────────────────────────
 
 def _fix_sysdate(sql: str) -> tuple[str, list[str]]:
-    """資料庫每日 T-1 更新：自動將 SQL 中指向今日的日期表達式改為昨日。
+    """資料庫每日 T-1 更新 + 日期等值比較需 TRUNC：自動修正以下情況。
     修正範圍（只作用於非 -- 注解部分）：
-      = SYSDATE           →  = SYSDATE-1
-      = TRUNC(SYSDATE)    →  = TRUNC(SYSDATE)-1
-      DATE 'YYYY-MM-DD'   →  DATE 'YYYY-MM-DD' (yesterday)
-      'YYYY-MM-DD'        →  'YYYY-MM-DD' (yesterday)
-      'YYYYMMDD'          →  'YYYYMMDD' (yesterday)
+      T-1 規則：
+        = SYSDATE              →  = TRUNC(SYSDATE)-1
+        = TRUNC(SYSDATE)       →  = TRUNC(SYSDATE)-1
+        DATE 'YYYY-MM-DD'      →  DATE 'YYYY-MM-DD' (yesterday)
+        'YYYY-MM-DD'           →  'YYYY-MM-DD' (yesterday)
+        'YYYYMMDD'             →  'YYYYMMDD' (yesterday)
+      TRUNC 精確度規則：
+        = SYSDATE-N            →  = TRUNC(SYSDATE)-N
+        （SYSDATE 含時間成分，日期欄位等值比較必須 TRUNC 截至零時）
     回傳 (fixed_sql, notices)，notices 為非空時表示有自動修正。
     """
     import re
@@ -513,23 +517,28 @@ def _fix_sysdate(sql: str) -> tuple[str, list[str]]:
     applied: set[str] = set()
 
     def _fix_code(code: str) -> str:
-        # 1. = SYSDATE (not already offset)
-        new, n = re.subn(r'(=\s*)SYSDATE\b(?!\s*[-+])', r'\1SYSDATE-1', code, flags=re.IGNORECASE)
+        # 1. = SYSDATE (bare, no offset) → TRUNC + T-1
+        new, n = re.subn(r'(=\s*)SYSDATE\b(?!\s*[-+])', r'\1TRUNC(SYSDATE)-1', code, flags=re.IGNORECASE)
         if n: applied.add("sysdate")
         code = new
-        # 2. = TRUNC(SYSDATE) (not already offset)
+        # 2. = TRUNC(SYSDATE) (no offset) → T-1
         new, n = re.subn(r'(=\s*TRUNC\s*\(\s*SYSDATE\s*\))(?!\s*[-+])', r'\1-1', code, flags=re.IGNORECASE)
         if n: applied.add("trunc_sysdate")
         code = new
-        # 3. DATE 'today' → DATE 'yesterday'  (must run before bare-string rule)
+        # 3. = SYSDATE-N (has offset, no TRUNC) → TRUNC for date accuracy
+        #    Matches "= SYSDATE - 1", ">= SYSDATE-7" etc.; skips "= TRUNC(SYSDATE)-1"
+        new, n = re.subn(r'(=\s*)SYSDATE\b(\s*-\s*\d+)', r'\1TRUNC(SYSDATE)\2', code, flags=re.IGNORECASE)
+        if n: applied.add("sysdate_trunc")
+        code = new
+        # 4. DATE 'today' → DATE 'yesterday'  (must run before bare-string rule)
         new, n = re.subn(rf"(DATE\s+'){re.escape(ymd)}'", rf"\g<1>{ymd_y}'", code, flags=re.IGNORECASE)
         if n: applied.add("date_literal")
         code = new
-        # 4. standalone 'YYYY-MM-DD' today
+        # 5. standalone 'YYYY-MM-DD' today
         if f"'{ymd}'" in code:
             applied.add("date_literal")
             code = code.replace(f"'{ymd}'", f"'{ymd_y}'")
-        # 5. 'YYYYMMDD' today
+        # 6. 'YYYYMMDD' today
         if f"'{ymd8}'" in code:
             applied.add("date8_literal")
             code = code.replace(f"'{ymd8}'", f"'{ymd8_y}'")
@@ -545,9 +554,11 @@ def _fix_sysdate(sql: str) -> tuple[str, list[str]]:
 
     notices: list[str] = []
     if "sysdate" in applied:
-        notices.append(f"[資料時效自動修正] SYSDATE → SYSDATE-1（資料庫最新只到昨日 T-1）")
+        notices.append("[資料時效自動修正] = SYSDATE → = TRUNC(SYSDATE)-1（T-1 + 截至零時）")
     if "trunc_sysdate" in applied:
-        notices.append(f"[資料時效自動修正] TRUNC(SYSDATE) → TRUNC(SYSDATE)-1")
+        notices.append("[資料時效自動修正] = TRUNC(SYSDATE) → = TRUNC(SYSDATE)-1（T-1）")
+    if "sysdate_trunc" in applied:
+        notices.append("[資料時效自動修正] = SYSDATE-N → = TRUNC(SYSDATE)-N（SYSDATE 含時間成分，日期等值比較須 TRUNC）")
     if "date_literal" in applied or "date8_literal" in applied:
         notices.append(f"[資料時效自動修正] 今日日期 {ymd} → 昨日 {ymd_y}（T-1）")
 
