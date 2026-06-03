@@ -776,7 +776,7 @@ def _confirm_and_generate(pending: dict) -> None:
         },
     })
     if not _ql_ok:
-        st.warning(f"⚠️ query_logs 寫入失敗：{_ql_err}")
+        st.session_state._ql_error = _ql_err  # persist across rerun
 
     st.session_state.hits          = pending["hits"]
     st.session_state.all_cases     = pending["all_cases"]
@@ -1368,6 +1368,10 @@ def main():
                 st.rerun()
 
         return  # 不顯示對話歷史或正常 chat input
+
+    # ── 跨 rerun 錯誤訊息 ─────────────────────────────────────────
+    if st.session_state.get("_ql_error"):
+        st.warning(f"⚠️ query_logs 寫入失敗：{st.session_state.pop('_ql_error')}")
 
     # ── Conversation ──────────────────────────────────────────────
     for i, turn in enumerate(st.session_state.conversation):
