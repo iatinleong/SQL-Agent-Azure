@@ -697,23 +697,6 @@ def _confirm_and_generate(pending: dict) -> None:
     )
     total_cost = guardrail_cost + plan_cost + gen.cost_usd
 
-    from agent.supabase_logger import insert
-    ok, err = insert("experiments", {
-        "name": "generate",
-        "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
-        "results": {
-            "query": pending["prompt"],
-            "scene": pending["scene"],
-            "candidate_tables": gen.candidate_tables,
-            "final_sql": gen.final_sql,
-            "tokens": {**guardrail_tokens, **all_plan_tokens, **gen.tokens},
-            "cost_usd": total_cost,
-        },
-        "log": "",
-    })
-    if not ok:
-        st.warning(f"⚠️ Supabase log 寫入失敗：{err}")
-
     turn = Turn(
         user_query=pending["prompt"],
         sql=gen.final_sql,
@@ -761,6 +744,39 @@ def _confirm_and_generate(pending: dict) -> None:
             st.session_state._session_title,
             st.session_state.conversation,
         )
+
+    # ── query_logs：完整 Phase 2 → 生成 → 驗證 記錄 ──────────────────
+    import dataclasses as _dc
+    from agent.supabase_logger import insert as _sb_insert
+    _v_entries = [e for e in gen.step_c_log if "round" in e]
+    _validate_passed = (
+        all(e.get("passed", True) and e.get("semantic_passed", True) for e in _v_entries)
+        if _v_entries else True
+    )
+    _plan_dict = _dc.asdict(plan)
+    _plan_dict.pop("tokens", None)
+    _ql_ok, _ql_err = _sb_insert("query_logs", {
+        "session_id":       st.session_state.get("_current_session_id"),
+        "employee_id":      (st.session_state.get("current_user") or {}).get("employee_id") or None,
+        "user_query":       pending["prompt"],
+        "scene":            pending["scene"],
+        "phase2_plan":      _plan_dict,
+        "qa_history":       pending.get("qa_history", []),
+        "candidate_tables": gen.candidate_tables,
+        "step_a_sql":       gen.step_a_sql,
+        "final_sql":        gen.final_sql,
+        "validate_log":     gen.step_c_log,
+        "validate_passed":  _validate_passed,
+        "tokens":           {**guardrail_tokens, **all_plan_tokens, **gen.tokens},
+        "cost_usd":         total_cost,
+        "cost_breakdown":   {
+            "guardrail_usd": round(guardrail_cost, 8),
+            "plan_usd":      round(plan_cost, 8),
+            "gen_usd":       round(gen.cost_usd, 8),
+        },
+    })
+    if not _ql_ok:
+        st.warning(f"⚠️ query_logs 寫入失敗：{_ql_err}")
 
     st.session_state.hits          = pending["hits"]
     st.session_state.all_cases     = pending["all_cases"]
@@ -831,28 +847,30 @@ def _run_and_render_refiner(new_query: str, guardrail_tokens: dict | None = None
         )
     total_cost = guardrail_cost + result.cost_usd
 
-    # ── 寫 Supabase experiment log ────────────────────────────────
-    from agent.supabase_logger import insert
+    # ── query_logs ────────────────────────────────────────────────
+    from agent.supabase_logger import insert as _sb_insert
     all_tokens = {
         **(guardrail_tokens or {}),
         **result.classify_tokens,
         **result.refine_tokens,
     }
-    ok, err = insert("experiments", {
-        "name": "refine",
-        "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
-        "results": {
-            "query": new_query,
-            "intent": result.intent,
-            "target_tables": result.target_tables,
-            "final_sql": result.new_sql,
-            "tokens": all_tokens,
-            "cost_usd": total_cost,
+    _ql_ok, _ql_err = _sb_insert("query_logs", {
+        "session_id":      st.session_state.get("_current_session_id"),
+        "employee_id":     (st.session_state.get("current_user") or {}).get("employee_id") or None,
+        "user_query":      new_query,
+        "scene":           st.session_state.get("primary_scene", ""),
+        "candidate_tables": result.target_tables or [],
+        "final_sql":       result.new_sql,
+        "tokens":          all_tokens,
+        "cost_usd":        total_cost,
+        "cost_breakdown":  {
+            "guardrail_usd": round(guardrail_cost, 8),
+            "plan_usd":      0.0,
+            "gen_usd":       round(result.cost_usd, 8),
         },
-        "log": "",
     })
-    if not ok:
-        st.warning(f"⚠️ Supabase log 寫入失敗：{err}")
+    if not _ql_ok:
+        st.warning(f"⚠️ query_logs 寫入失敗：{_ql_err}")
 
     # ── 個人化簡介更新（refine 本身就是修正訊號，且個人化功能開啟）──
     if result.intent in ("MODIFY_SQL", "ADD_TABLE"):

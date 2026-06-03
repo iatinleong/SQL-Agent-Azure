@@ -212,6 +212,17 @@ class BlockRegistry:
                 if tname in err_up:
                     return block.name
 
+        # Hallucination column fallback: "欄位不存在於查詢中任何表格：COL_NAME"
+        # Table-name matching above won't find it — search block bodies for the identifier.
+        if "[幻覺]" in error:
+            m = re.search(r'[：:]\s*(\S+)\s*$', error.strip())
+            if m:
+                ident = m.group(1).upper()
+                col = ident.split(".")[-1]  # strip table prefix if present
+                for block in self._ordered:
+                    if re.search(r"\b" + re.escape(col) + r"\b", block.body_sql, re.IGNORECASE):
+                        return block.name
+
         return None
 
     # ── block replacement ────────────────────────────────────────────

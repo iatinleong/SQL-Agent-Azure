@@ -190,6 +190,18 @@ def test_tag_errors() -> int:
         if not _check(desc, ok, f"tagged='{tagged}'"):
             failed += 1
 
+    # column-only hallucination fallback: "欄位不存在於查詢中任何表格：COL"
+    # table-name matching fails; body_sql search should find the block
+    sql_plain = "SELECT cust_name FROM DM_S_VIEW.M_PT_CUSTOMER WHERE party_id = '123'"
+    reg_plain = _reg(sql_plain)
+    tagged_plain = reg_plain.tag_errors(["[幻覺] 欄位不存在於查詢中任何表格：CUST_NAME"])[0]
+    if not _check(
+        "unqualified hallucination col → body_sql fallback → final_select",
+        tagged_plain.startswith("[block=final_select]"),
+        f"tagged='{tagged_plain}'",
+    ):
+        failed += 1
+
     return failed
 
 
