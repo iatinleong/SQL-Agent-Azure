@@ -9,7 +9,7 @@
     "name": "例行性報表",
     "trigger_scenes": ["財管商品業績與例行月報"],
     "trigger_keywords": ["例行", "月報"],
-    "rule": "例行性報表結構(ACCT_NBR粒度): M_AC_ACCOUNT(基礎母體 WHERE BRANCH_CODE+PROD_TYPE_CODE='100'+ACCT_VALID_FLAG='Y') + S_ANDYCTKUO.PARTY_NAME(姓名) + S_ARIELSHAO.CUSTOMER_GROUP_2026Q1(經紀客群) + S_MELODYJJJIAN.CUSTOMER_GROUP_2026(財管客群) + 各 M_AT_* 明細表(現貨交易量PIVOT全年12月/海外股/基金/海外債/結構型/壽險/期貨口數/借券/不限用途各自CTE) + M_AC_ACCOUNT_INVENTORY(台股庫存+融資餘額PIVOT全年12月 WHERE INVE_TYPE_CODE='004') + M_AC_ACCOUNT_REVENUE(貢獻度要區分經紀/財管且含2023-2025多年，排除REV_CODE='6L1R01')。業績表(EMP_NBR粒度): M_PT_SALES(EMP_FLAG='Y') 為母體 + 各商品CTE(結構型須拆境內/境外/NPI) + GROUP BY NVL(ACC.EMP_NBR,TXN.EMP_NBR) + CUBE(TXN_YYYYMM) → PIVOT全年12月+FY。⚠️ 必須覆蓋全商品線: 台股(PROD_TYPE_CODE='100')、海外股('200')、基金(M_AT_FUND_TXN)、海外債(M_AT_BOND_TXN)、結構型(M_AT_SN_TXN)、壽險(M_AT_INSURANCE_TXN)、庫存、貢獻度。⚠️ 報表完整度: (1)融資餘額→PIVOT全年12個月(非僅最新); (2)貢獻度→包含多年對比(如2023/2024/2025)且區分經紀/財管; (3)期貨→用TXN_UNIT_QTY(口數)非TXN_AMT_TWD; (4)貢獻度排除REV_CODE='6L1R01'。⚠️ 結構型商品必須區分: (1)境內:PROD_TYPE_CODE='500'; (2)境外:PROD_TYPE_CODE='200'; (3)境內NPI:PROD_CODE LIKE '4FF%'。三者需建獨立CTE。PIVOT全年12月+CUBE(TXN_YYYYMM)產FY合計"
+    "rule": "例行性報表結構(ACCT_NBR粒度): M_AC_ACCOUNT(基礎母體 WHERE BRANCH_CODE+PROD_TYPE_CODE='100'+ACCT_VALID_FLAG='Y') + S_CHIAHSUANHSU.PARTY_NAME(姓名) + S_ARIELSHAO.CUSTOMER_GROUP_2026Q1(經紀客群) + S_MELODYJJJIAN.CUSTOMER_GROUP_2026(財管客群) + 各 M_AT_* 明細表(現貨交易量PIVOT全年12月/海外股/基金/海外債/結構型/壽險/期貨口數/借券/不限用途各自CTE) + M_AC_ACCOUNT_INVENTORY(台股庫存+融資餘額PIVOT全年12月 WHERE INVE_TYPE_CODE='004') + M_AC_ACCOUNT_REVENUE(貢獻度要區分經紀/財管且含2023-2025多年，排除REV_CODE='6L1R01')。業績表(EMP_NBR粒度): M_PT_SALES(EMP_FLAG='Y') 為母體 + 各商品CTE(結構型須拆境內/境外/NPI) + GROUP BY NVL(ACC.EMP_NBR,TXN.EMP_NBR) + CUBE(TXN_YYYYMM) → PIVOT全年12月+FY。⚠️ 必須覆蓋全商品線: 台股(PROD_TYPE_CODE='100')、海外股('200')、基金(M_AT_FUND_TXN)、海外債(M_AT_BOND_TXN)、結構型(M_AT_SN_TXN)、壽險(M_AT_INSURANCE_TXN)、庫存、貢獻度。⚠️ 報表完整度: (1)融資餘額→PIVOT全年12個月(非僅最新); (2)貢獻度→包含多年對比(如2023/2024/2025)且區分經紀/財管; (3)期貨→用TXN_UNIT_QTY(口數)非TXN_AMT_TWD; (4)貢獻度排除REV_CODE='6L1R01'。⚠️ 結構型商品必須區分: (1)境內:PROD_TYPE_CODE='500'; (2)境外:PROD_TYPE_CODE='200'; (3)境內NPI:PROD_CODE LIKE '4FF%'。三者需建獨立CTE。PIVOT全年12月+CUBE(TXN_YYYYMM)產FY合計"
   },
   {
     "name": "月均交易量",
@@ -33,7 +33,7 @@
     "name": "客群貼標",
     "trigger_scenes": ["精準行銷與專案名單篩選"],
     "trigger_keywords": ["客群", "貼標"],
-    "rule": "【現行版本】經紀客群貼標表: S_ARIELSHAO.CUSTOMER_GROUP_2026Q1 (JOIN ON ACCT_NBR, 欄位名: CUSTOMER_GROUP 或 客群)。財管客群: M_AC_ACCOUNT.NW_SEGMENT_DESC (如'價值Plus') 可直接篩選。財管客群貼標_ID: S_MELODYJJJIAN.CUSTOMER_GROUP_2026 (JOIN ON PARTY_ID AND 分公司代碼)。客戶名稱: S_ANDYCTKUO.PARTY_NAME (LEFT JOIN ON ACCT_NBR)"
+    "rule": "【現行版本】經紀客群貼標表: S_ARIELSHAO.CUSTOMER_GROUP_2026Q1 (JOIN ON ACCT_NBR, 欄位名: CUSTOMER_GROUP 或 客群)。財管客群: M_AC_ACCOUNT.NW_SEGMENT_DESC (如'價值Plus') 可直接篩選。財管客群貼標_ID: S_MELODYJJJIAN.CUSTOMER_GROUP_2026 (JOIN ON PARTY_ID AND 分公司代碼)。客戶名稱: S_CHIAHSUANHSU.PARTY_NAME (LEFT JOIN ON ACCT_NBR)"
   },
   {
     "name": "開戶分析",
@@ -69,12 +69,12 @@
     "name": "綜合客戶報表結構",
     "trigger_scenes": [],
     "trigger_keywords": ["例行", "綜合", "客戶明細", "最新名單"],
-    "rule": "綜合客戶報表(例行報表/客戶資料/最新名單)的標準結構: 1) BASE CTE: M_AC_ACCOUNT WHERE BRANCH_CODE+PROD_TYPE_CODE='100'+ACCT_VALID_FLAG='Y' + LEFT JOIN S_ANDYCTKUO.PARTY_NAME 2) 現貨交易: CTE FROM M_AT_STOCK_TXN(PROD_TYPE_CODE='100') GROUP BY ACCT_NBR, TXN_YYYYMM → PIVOT月欄位 3) 海外股: M_AT_STOCK_TXN(PROD_TYPE_CODE='200') 4) 基金: M_AT_FUND_TXN(BUY_SELL_CODE='001') 5) 海外債: M_AT_BOND_TXN 6) 結構型: M_AT_SN_TXN(BUY_SELL_CODE='001') 7) 壽險: M_AT_INSURANCE_TXN(POLICY_STATUS_CODE IN ('0','1')) 8) 庫存: M_AC_ACCOUNT_INVENTORY(最新SNAP_YYYYMM) 9) 貢獻度: M_AC_ACCOUNT_REVENUE 10) 客群標籤: S_ARIELSHAO.CUSTOMER_GROUP_2026Q1(經紀) + S_MELODYJJJIAN.CUSTOMER_GROUP_2026(財管) 11) 最終: SELECT BASE.*, LEFT JOIN 各CTE。⚠️ '客戶資料/客戶明細/最新名單/例行性報表' 通常指多維度綜合績效報表，絕非簡單客戶名冊"
+    "rule": "綜合客戶報表(例行報表/客戶資料/最新名單)的標準結構: 1) BASE CTE: M_AC_ACCOUNT WHERE BRANCH_CODE+PROD_TYPE_CODE='100'+ACCT_VALID_FLAG='Y' + LEFT JOIN S_CHIAHSUANHSU.PARTY_NAME 2) 現貨交易: CTE FROM M_AT_STOCK_TXN(PROD_TYPE_CODE='100') GROUP BY ACCT_NBR, TXN_YYYYMM → PIVOT月欄位 3) 海外股: M_AT_STOCK_TXN(PROD_TYPE_CODE='200') 4) 基金: M_AT_FUND_TXN(BUY_SELL_CODE='001') 5) 海外債: M_AT_BOND_TXN 6) 結構型: M_AT_SN_TXN(BUY_SELL_CODE='001') 7) 壽險: M_AT_INSURANCE_TXN(POLICY_STATUS_CODE IN ('0','1')) 8) 庫存: M_AC_ACCOUNT_INVENTORY(最新SNAP_YYYYMM) 9) 貢獻度: M_AC_ACCOUNT_REVENUE 10) 客群標籤: S_ARIELSHAO.CUSTOMER_GROUP_2026Q1(經紀) + S_MELODYJJJIAN.CUSTOMER_GROUP_2026(財管) 11) 最終: SELECT BASE.*, LEFT JOIN 各CTE。⚠️ '客戶資料/客戶明細/最新名單/例行性報表' 通常指多維度綜合績效報表，絕非簡單客戶名冊"
   },
   {
     "name": "財管客群資料數據",
     "trigger_scenes": [],
     "trigger_keywords": ["財管客群", "財管庫存", "財管損益"],
-    "rule": "財管客群客戶資料/數據/庫存/損益: 以 PARTY_ID 為彙總粒度。BASE: M_AC_ACCOUNT WHERE BRANCH_NAME+NW_SEGMENT_DESC+ACCT_VALID_FLAG='Y' LEFT JOIN S_ANDYCTKUO.PARTY_NAME。客戶屬性: M_PT_CUSTOMER(AGE/KYC_RISK_DESC)。★財管庫存+損益★: M_AC_ACCOUNT_INVENTORY(最新SNAP_YYYYMM) GROUP BY PARTY_ID，按PROD_MTYPE_CODE分類: '210'海外股/'230'海外債/'120,220,420'基金/'240,540'結構型/'6L0'壽險，各取BAL_AMT_TWD+BENEFIT_AMT_TWD。★各商品成交金額(必須)★: 各 M_AT_* 明細表各建獨立CTE，最終以 LEFT JOIN 合併確保母體完整"
+    "rule": "財管客群客戶資料/數據/庫存/損益: 以 PARTY_ID 為彙總粒度。BASE: M_AC_ACCOUNT WHERE BRANCH_NAME+NW_SEGMENT_DESC+ACCT_VALID_FLAG='Y' LEFT JOIN S_CHIAHSUANHSU.PARTY_NAME。客戶屬性: M_PT_CUSTOMER(AGE/KYC_RISK_DESC)。★財管庫存+損益★: M_AC_ACCOUNT_INVENTORY(最新SNAP_YYYYMM) GROUP BY PARTY_ID，按PROD_MTYPE_CODE分類: '210'海外股/'230'海外債/'120,220,420'基金/'240,540'結構型/'6L0'壽險，各取BAL_AMT_TWD+BENEFIT_AMT_TWD。★各商品成交金額(必須)★: 各 M_AT_* 明細表各建獨立CTE，最終以 LEFT JOIN 合併確保母體完整"
   }
 ]
