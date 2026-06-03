@@ -91,11 +91,13 @@ def _check_oracle_quirks(sql: str) -> list[str]:
     for select_node in tree.find_all(exp.Select):
         if select_node.args.get("from"):
             continue
-        # sqlglot 在某些結構（CTE + FETCH FIRST、視窗函數）下，from arg 可能未填入，
-        # 只要 SELECT 含欄位引用、聚合函數或視窗函數，就一定有資料來源，不需 FROM DUAL。
+        # sqlglot 在某些結構（CTE + 純函數呼叫、FETCH FIRST、視窗函數）下，from arg 可能未填入，
+        # 只要 SELECT 含欄位引用、聚合函數、視窗函數或任何 Func（TO_CHAR/ADD_MONTHS/TRUNC/SYSDATE 等），
+        # 就表示有明確計算來源，不觸發 FROM DUAL 警告。
         if (select_node.find(exp.Column)
                 or select_node.find(exp.AggFunc)
-                or select_node.find(exp.Window)):
+                or select_node.find(exp.Window)
+                or select_node.find(exp.Func)):
             continue
 
         cte_name = ""
@@ -641,6 +643,8 @@ def _fix_with_llm(sql: str, errors: list[str], model: str, schema_hint: str = ""
                     "【資料時效】整個資料庫每日 T-1 更新：所有日期欄位的最新可用資料為昨日（SYSDATE-1）。"
                     "使用者說「今天」一律解讀為昨日；禁止以今日日期（SYSDATE 或等於今日的 DATE literal）"
                     "作為篩選上限，否則查詢結果為空。"
+                    "取最新 SNAP_YYYYMM 時使用 TO_CHAR(TRUNC(SYSDATE-1,'MM'),'YYYYMM')；"
+                    "禁止用 ADD_MONTHS(TRUNC(SYSDATE,'MM'),-1)，那會得到上個月而非最新月份。"
                 ),
             },
             {
