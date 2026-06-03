@@ -620,7 +620,7 @@ def _fix_with_llm(sql: str, errors: list[str], model: str, schema_hint: str = ""
 def validate_and_fix(
     sql: str,
     model: str = VALIDATOR_MODEL,
-    max_iter: int = 3,
+    max_iter: int = 1,
 ) -> tuple[str, list[dict], dict]:
     """
     全套驗證並自動修正，最多 max_iter 輪。
