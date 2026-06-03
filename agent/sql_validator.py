@@ -320,6 +320,17 @@ def _is_in_window_spec(col_node) -> bool:
     return False
 
 
+def _is_intermediate_select(select_node) -> bool:
+    """Return True if this SELECT is inside a CTE or subquery (not the final output row)."""
+    from sqlglot import exp
+    node = getattr(select_node, "parent", None)
+    while node is not None:
+        if isinstance(node, (exp.CTE, exp.Subquery)):
+            return True
+        node = getattr(node, "parent", None)
+    return False
+
+
 def _get_direct_real_tables(select_node, cte_names: set[str]) -> set[str]:
     """回傳此 SELECT 的 FROM/JOIN 直接來源的真實表格（不含 subquery 內層）。"""
     from sqlglot import exp
@@ -370,6 +381,9 @@ def _check_data_redaction(sql: str) -> list[str]:
     seen: set[str] = set()
 
     for select_node in tree.find_all(exp.Select):
+        # CTE / subquery 內的 party_id 是 JOIN/GROUP key，不是最終輸出，不報錯
+        if _is_intermediate_select(select_node):
+            continue
         direct_tables = _get_direct_real_tables(select_node, cte_names)
 
         for expr in select_node.expressions:
@@ -538,6 +552,65 @@ def _fix_sysdate(sql: str) -> tuple[str, list[str]]:
     return '\n'.join(lines), notices
 
 
+# ── 隱私與語意規則 ──────────────────────────────────────────────────
+
+def _check_forbidden_tables(sql: str) -> list[str]:
+    """禁止使用 PARTY_NAME 表格（隱私政策）。"""
+    try:
+        import sqlglot
+        from sqlglot import exp
+        tree = sqlglot.parse_one(sql, dialect="oracle")
+    except Exception:
+        return []
+
+    errors: list[str] = []
+    seen: set[str] = set()
+    for tnode in tree.find_all(exp.Table):
+        name = (tnode.name or "").upper()
+        if name != "PARTY_NAME":
+            continue
+        full = f"{tnode.db.upper() + '.' if tnode.db else ''}{name}"
+        if full not in seen:
+            seen.add(full)
+            errors.append(
+                f"[隱私政策] 禁止使用 {full}：PARTY_NAME 表格因隱私規定不可查詢，"
+                "請移除客戶姓名欄位"
+            )
+    return errors
+
+
+def _check_mask_misuse(sql: str) -> list[str]:
+    """偵測最終 SELECT 中 party_id_mask 被 alias 成非識別碼用途（如客戶姓名）。"""
+    try:
+        import sqlglot
+        from sqlglot import exp
+        tree = sqlglot.parse_one(sql, dialect="oracle")
+    except Exception:
+        return []
+
+    _MASK_KEYWORDS = ("MASK", "ID", "PARTY")
+    errors: list[str] = []
+    for select_node in tree.find_all(exp.Select):
+        if _is_intermediate_select(select_node):
+            continue
+        for expr in select_node.expressions:
+            if not isinstance(expr, exp.Alias):
+                continue
+            col = expr.this
+            if not isinstance(col, exp.Column):
+                continue
+            if (col.name or "").upper() != "PARTY_ID_MASK":
+                continue
+            alias = expr.alias or ""
+            if not any(kw in alias.upper() for kw in _MASK_KEYWORDS):
+                errors.append(
+                    f"[語意錯誤] party_id_mask 不可 alias 為 \"{alias}\"："
+                    "party_id_mask 是加密識別碼，非姓名或顯示欄位；"
+                    "請移除此欄位或改用正確來源"
+                )
+    return errors
+
+
 # ── 全套錯誤收集 ────────────────────────────────────────────────────
 
 def _collect_all_errors(sql: str) -> list[str]:
@@ -549,7 +622,9 @@ def _collect_all_errors(sql: str) -> list[str]:
         return glot_errors
 
     errors: list[str] = []
+    errors += _check_forbidden_tables(sql)
     errors += _check_data_redaction(sql)
+    errors += _check_mask_misuse(sql)
     errors += _check_oracle_quirks(sql)
     errors += _check_dm_s_view_prefix(sql)
     errors += check_hallucination(sql)
@@ -634,12 +709,16 @@ def _fix_with_llm(sql: str, errors: list[str], model: str, schema_hint: str = ""
                     "【Oracle 語法】使用 Oracle 19c+ 語法，"
                     "禁用其他資料庫方言（MySQL 的 LIMIT、PostgreSQL 的 ILIKE 等）。\n\n"
                     "【Data Redaction】party_id 受 Oracle Data Redaction 保護：\n"
-                    "1. 任何 SELECT 清單（含 CTE 內層）禁止出現 party_id；JOIN / ON / WHERE 條件可使用 party_id。\n"
+                    "1. 最終報表 SELECT（最外層）禁止輸出 party_id；"
+                    "CTE / subquery 內可保留 party_id 作為 JOIN / GROUP BY key，不需移除。\n"
                     "2. 需顯示個人識別碼時改用 party_id_mask：若來源表已有 party_id_mask 欄位，"
                     "直接 SELECT party_id_mask；若無，則 JOIN DM_S_VIEW.M_AC_ACCOUNT ON "
                     "<主表>.party_id = M_AC_ACCOUNT.party_id，再 SELECT M_AC_ACCOUNT.party_id_mask。\n"
                     "3. party_id 與 party_id_mask 數值不同，不可互換：JOIN / WHERE / IN 條件一律用 party_id；"
-                    "禁止用 party_id_mask 去比對或 JOIN 其他表格的 party_id。\n\n"
+                    "禁止用 party_id_mask 去比對或 JOIN 其他表格的 party_id。\n"
+                    "4. party_id_mask 是加密識別碼，禁止 alias 成姓名欄位（如 AS \"客戶姓名\"）；"
+                    "若姓名來源表不存在，請將姓名欄位改為 NULL AS \"客戶姓名\" 或直接移除，不可用 party_id_mask 代替。\n\n"
+                    "【隱私政策】禁止使用 PARTY_NAME 表格（任何 schema 下），請從 SQL 中完整移除。\n\n"
                     "【資料時效】整個資料庫每日 T-1 更新：所有日期欄位的最新可用資料為昨日（SYSDATE-1）。"
                     "使用者說「今天」一律解讀為昨日；禁止以今日日期（SYSDATE 或等於今日的 DATE literal）"
                     "作為篩選上限，否則查詢結果為空。"
