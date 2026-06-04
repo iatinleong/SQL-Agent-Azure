@@ -550,24 +550,28 @@ def _start_new_query(prompt: str, guardrail_tokens: dict | None = None) -> None:
         with st.expander("Phase 1：向量檢索", expanded=False):
             st.markdown(phase1_log)
 
-        # Phase 2：報表需求確認
-        _s = st.empty()
-        _s.caption("⏳ Phase 2：分析報表結構中…")
+        # Phase 2：資料準備（商品消歧 + 報表規劃）
         case_sqls = [_get_case_sql_text(h.case_id, all_cases) for h in hits]
         from agent.generator import _load_metrics_text, _load_business_skills_text
         _metrics_text = _load_metrics_text(req_text)
         _skills_text = _load_business_skills_text(req_text, scene="")
-        plan = plan_report(
-            req_text, case_sqls,
-            entities_text=entities_text,
-            schema_text=schema_for_plan,
-            metrics_text=_metrics_text,
-            skills_text=_skills_text,
-            user_profile=_active_profile,
-        )
-        _s.empty()
+        from agent.product_router import PRODUCT_ROUTER as _pr
+        _resolution = _pr.resolve(req_text)
+        _plan_obj = None
+        if not _resolution.ambiguous:
+            _s = st.empty()
+            _s.caption("⏳ Phase 2：分析報表結構中…")
+            _plan_obj = plan_report(
+                req_text, case_sqls,
+                entities_text=entities_text,
+                schema_text=schema_for_plan,
+                metrics_text=_metrics_text,
+                skills_text=_skills_text,
+                user_profile=_active_profile,
+            )
+            _s.empty()
 
-    st.session_state._plan = {
+    _plan_base = {
         "prompt":           prompt,
         "req":              req_text,
         "hits":             hits,
@@ -589,10 +593,25 @@ def _start_new_query(prompt: str, guardrail_tokens: dict | None = None) -> None:
             "codes":        extraction.codes,
         },
         "phase2_tables":    sorted(_candidate_set_plan),
-        "plan":             plan,
         "qa_history":       [],
-        "all_plan_tokens":  dict(plan.tokens),
+        "all_plan_tokens":  {},
+        "resolved_product_routes": {t: r.to_dict() for t, r in _resolution.resolved.items()},
     }
+    if _resolution.ambiguous:
+        st.session_state._plan = {
+            **_plan_base,
+            "_product_qa": {
+                "pending_terms": [t.term for t in _resolution.ambiguous],
+                "resolved":      {},
+            },
+            "_pqa_history": [],
+        }
+    else:
+        st.session_state._plan = {
+            **_plan_base,
+            "plan":           _plan_obj,
+            "all_plan_tokens": dict(_plan_obj.tokens),
+        }
     st.rerun()
 
 
@@ -618,6 +637,8 @@ def _confirm_and_generate(pending: dict) -> None:
     _extra_context = " ".join(filter(None, [_qa_text, _understanding])).strip()
 
     _gen_profile = pending.get("user_profile", "") if st.session_state.get("personalization_enabled", True) else []
+    from agent.product_router import PRODUCT_ROUTER as _pr
+    _route_constraint = _pr.format_constraints(pending.get("resolved_product_routes", {}))
     gen = generate(
         pending["req"],
         pending["hits"],
@@ -628,6 +649,7 @@ def _confirm_and_generate(pending: dict) -> None:
         extra_context=_extra_context,
         user_profile=_gen_profile,
         forced_tables=plan.tables if plan.tables else None,
+        resolved_product_routes=_route_constraint,
     )
 
     step_a_log = (
@@ -1240,10 +1262,69 @@ def main():
 
     # ── 報表結構確認中（ask / confirm 雙向對話）────────────────────
     if st.session_state._plan is not None:
-        from agent.report_planner import fmt_plan_for_user, plan_report
-
         pending = st.session_state._plan
-        plan    = pending["plan"]
+
+        # ── 商品路由消歧（plan_report 之前）──────────────────────
+        if "_product_qa" in pending:
+            from agent.product_router import PRODUCT_ROUTER as _pr
+            _pqa  = pending["_product_qa"]
+            _term = _pr.get_term(_pqa["pending_terms"][0])
+            st.markdown(
+                f'<div class="sa-user">'
+                f'<div class="sa-user-avatar">你</div>'
+                f'<div class="sa-user-text">{pending["prompt"]}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            with st.container(border=True):
+                with st.expander("Phase 1：向量檢索", expanded=False):
+                    st.markdown(pending["phase1_log"])
+                for _h in pending.get("_pqa_history", []):
+                    st.info(f"系統問：{_h['q']}")
+                    st.markdown(
+                        f'<div class="sa-user" style="margin:4px 0 12px 0;">'
+                        f'<div class="sa-user-avatar">你</div>'
+                        f'<div class="sa-user-text">{_h["a"]}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                st.info(f"**{_term.clarification}**")
+                _cols = st.columns(len(_term.routes))
+                for _i, _route in enumerate(_term.routes):
+                    with _cols[_i]:
+                        if st.button(_route.label, key=f"pqa_{_term.term}_{_route.label}", use_container_width=True):
+                            _pqa["resolved"][_term.term] = _route.to_dict()
+                            _pqa["pending_terms"] = _pqa["pending_terms"][1:]
+                            pending["_pqa_history"] = pending.get("_pqa_history", []) + [
+                                {"q": _term.clarification, "a": _route.label}
+                            ]
+                            if not _pqa["pending_terms"]:
+                                del pending["_product_qa"]
+                                pending["resolved_product_routes"] = {
+                                    **pending.get("resolved_product_routes", {}),
+                                    **_pqa["resolved"],
+                                }
+                                from agent.report_planner import plan_report
+                                with st.spinner("⏳ Phase 2：分析報表結構中…"):
+                                    _pqa_qa = [{"q": h["q"], "a": h["a"]} for h in pending.get("_pqa_history", [])]
+                                    _p = plan_report(
+                                        pending["req"],
+                                        pending["case_sqls"],
+                                        qa_history=_pqa_qa,
+                                        entities_text=pending.get("entities_text", ""),
+                                        schema_text=pending.get("schema_for_plan", ""),
+                                        metrics_text=pending.get("metrics_text", ""),
+                                        skills_text=pending.get("skills_text", ""),
+                                        user_profile=pending.get("user_profile", ""),
+                                    )
+                                pending["plan"] = _p
+                                pending["all_plan_tokens"] = dict(_p.tokens)
+                            st.session_state._plan = pending
+                            st.rerun()
+            return
+
+        from agent.report_planner import fmt_plan_for_user, plan_report
+        plan = pending["plan"]
 
         # 使用者原始需求氣泡
         st.markdown(
