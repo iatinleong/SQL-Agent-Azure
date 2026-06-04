@@ -568,6 +568,9 @@ def _start_new_query(prompt: str, guardrail_tokens: dict | None = None) -> None:
                 metrics_text=_metrics_text,
                 skills_text=_skills_text,
                 user_profile=_active_profile,
+                resolved_routes_text=_pr.format_constraints(
+                    {t: r.to_dict() for t, r in _resolution.resolved.items()}
+                ),
             )
             _s.empty()
 
@@ -1305,6 +1308,7 @@ def main():
                                     **_pqa["resolved"],
                                 }
                                 from agent.report_planner import plan_report
+                                _resolved_routes = pending.get("resolved_product_routes", {})
                                 with st.spinner("⏳ Phase 2：分析報表結構中…"):
                                     _pqa_qa = [{"q": h["q"], "a": h["a"]} for h in pending.get("_pqa_history", [])]
                                     _p = plan_report(
@@ -1316,6 +1320,7 @@ def main():
                                         metrics_text=pending.get("metrics_text", ""),
                                         skills_text=pending.get("skills_text", ""),
                                         user_profile=pending.get("user_profile", ""),
+                                        resolved_routes_text=_pr.format_constraints(_resolved_routes),
                                     )
                                 pending["plan"] = _p
                                 pending["all_plan_tokens"] = dict(_p.tokens)

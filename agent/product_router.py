@@ -11,6 +11,7 @@ class ProductRoute:
     table: str                                    # "M_AT_STOCK_TXN"
     filters: dict[str, str]                       # {"PROD_TYPE_CODE": "100", "PROD_STYPE_CODE": "019"}
     explicit_keywords: list[str] = field(default_factory=list)  # ["台股ETF", "國內ETF"]
+    context_all: list[str] = field(default_factory=list)        # all must appear within ±20 chars of scan_keyword
 
     def to_dict(self) -> dict:
         return {"label": self.label, "table": self.table, "filters": self.filters}
@@ -76,18 +77,30 @@ class ProductRouter:
                         break
 
             if len(matched) == 1:
-                # Exactly one route explicitly identified → auto-resolve
                 resolved[term.term] = matched[0]
             elif len(matched) >= 2:
-                # Multiple routes explicitly mentioned → "兩者都要" if available, else ask
                 both = next((r for r in term.routes if r.label == "兩者都要"), None)
                 resolved[term.term] = both if both else matched[0]
             elif len(term.routes) == 1:
-                # Only one possible route → auto-resolve
                 resolved[term.term] = term.routes[0]
             else:
-                # Scan keyword found but no qualifier → ambiguous
-                ambiguous.append(term)
+                # No explicit keyword matched — try context_all proximity check
+                _m = re.search(_scan_pat, text, re.IGNORECASE)
+                if _m:
+                    _ws = max(0, _m.start() - 5)
+                    _we = min(len(text), _m.end() + 20)
+                    _win = text[_ws:_we]
+                    _ctx_match = next(
+                        (r for r in term.routes if r.context_all and
+                         all(re.search(re.escape(q), _win, re.IGNORECASE) for q in r.context_all)),
+                        None,
+                    )
+                    if _ctx_match:
+                        resolved[term.term] = _ctx_match
+                    else:
+                        ambiguous.append(term)
+                else:
+                    ambiguous.append(term)
 
         return RouteResolution(resolved=resolved, ambiguous=ambiguous, unmatched=[])
 
@@ -126,8 +139,14 @@ PRODUCT_CATALOG: list[ProductTerm] = [
                 filters={"PROD_TYPE_CODE": "200", "PROD_MTYPE_CODE": "210", "PROD_STYPE_CODE": "019"},
                 explicit_keywords=["海外ETF", "境外ETF", "複委託ETF"],
             ),
+            ProductRoute(
+                label="兩者都要",
+                table="M_AT_STOCK_TXN",
+                filters={},
+                explicit_keywords=[],
+            ),
         ],
-        clarification="需求中提到 ETF，請問是台股ETF 還是海外ETF？",
+        clarification="需求中提到 ETF，請問是台股ETF、海外ETF，還是兩者都要？",
     ),
     ProductTerm(
         term="結構型",
@@ -150,6 +169,7 @@ PRODUCT_CATALOG: list[ProductTerm] = [
                 table="M_AT_SN_TXN",
                 filters={},
                 explicit_keywords=["境內及境外結構型", "境內與境外結構型"],
+                context_all=["境內", "境外"],  # catches "結構型（境內、境外）" pattern
             ),
         ],
         clarification="需求中提到結構型商品，請問是境內結構型、境外結構型，還是兩者都要？",
