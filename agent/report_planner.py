@@ -13,6 +13,7 @@ from .generator import _chat
 class ReportPlan:
     status: str = "confirm"         # "ask" | "confirm"
     question: str = ""              # status="ask" 時，向使用者提的問題（一次一個）
+    base_population: str = ""       # 母體：這份報表的分析對象是誰（白話，50字以內）
     granularity: str = "其他"       # 帳戶/客戶/營業員/分公司/其他
     granularity_detail: str = ""    # 每列代表什麼（白話）
     understanding: str = ""         # status="confirm" 時，LLM 對整份報表需求的完整理解摘要
@@ -99,7 +100,9 @@ def plan_report(
 - 結構型：可能是境內結構型 或 境外結構型，需確認。若需求已明確寫「境內」「境外」或「兩者都要」則不必問。
 
 你的任務是確認是否已有足夠資訊來生成報表。判斷原則：
-- 若有任何真正無法從需求或歷史案例中判斷的關鍵資訊（例如：時間範圍不明確、不知道要篩哪個條件、不確定業績指標的定義）→ status="ask"，提一個最重要的問題。
+- 第一步先確立母體（分析對象是誰）：例如「所有有效台股帳號」、「本分公司名下有交易的客戶」、「全體在職營業員」。若母體範圍不清楚（如不知道要不要限定分公司、有效帳號、特定客群），這是最優先要釐清的問題。
+- 確立母體後，再確認粒度（每列代表什麼）、指標（要算什麼）、時間範圍、篩選條件。
+- 若有任何真正無法從需求或歷史案例中判斷的關鍵資訊 → status="ask"，提一個最重要的問題。
 - 若資訊已足夠（可合理推斷）→ status="confirm"，用白話寫出你對整份報表的完整理解。
 - 每次只問一個問題。顯而易見的事情不需要問。盡量 confirm，只有真的不確定才 ask。
 
@@ -107,9 +110,10 @@ def plan_report(
 {{
   "status": "ask 或 confirm",
   "question": "若 status=ask：一個最關鍵的問題，用業務員聽得懂的話問；否則空字串",
+  "base_population": "這份報表的分析對象（母體）是誰，用業務員聽得懂的白話描述，50字以內。例如：『本分公司所有有效台股帳號』、『過去一年有交易紀錄的客戶』",
   "granularity": "帳戶|客戶|營業員|分公司|其他",
   "granularity_detail": "每一列代表什麼，用業務員聽得懂的話說明，50字以內",
-  "understanding": "若 status=confirm：用業務員聽得懂的白話說明這份報表要呈現什麼，包含時間範圍、篩選條件、排列方式、每列代表什麼；絕對不可出現任何資料表名稱、欄位英文名稱或任何技術術語；否則空字串",
+  "understanding": "若 status=confirm：用業務員聽得懂的白話說明這份報表要呈現什麼，包含母體範圍、時間範圍、篩選條件、排列方式、每列代表什麼；絕對不可出現任何資料表名稱、欄位英文名稱或任何技術術語；否則空字串",
   "tables": "若 status=confirm：從【參考資料 3：可用欄位定義】中，選出這份報表可能需要用到的表格英文名稱清單，例如 ['M_AC_ACCOUNT', 'M_AT_STOCK_TXN']；否則空陣列 []"
 }}"""
 
@@ -142,6 +146,7 @@ def plan_report(
     return ReportPlan(
         status=d.get("status", "confirm"),
         question=d.get("question", ""),
+        base_population=d.get("base_population", ""),
         granularity=d.get("granularity", "其他"),
         granularity_detail=d.get("granularity_detail", ""),
         understanding=d.get("understanding", ""),
@@ -160,5 +165,7 @@ def fmt_plan_for_prompt(plan: ReportPlan) -> str:
     lines = ["【報表需求理解（使用者已確認，請嚴格遵守）】"]
     if plan.understanding:
         lines.append(f"  {plan.understanding}")
+    if plan.base_population:
+        lines.append(f"  母體（分析對象）：{plan.base_population}")
     lines.append(f"  每一列粒度：{plan.granularity}（{plan.granularity_detail}）")
     return "\n".join(lines)
