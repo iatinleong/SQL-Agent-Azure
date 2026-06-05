@@ -100,11 +100,11 @@ def plan_report(
 - 結構型：可能是境內結構型 或 境外結構型，需確認。若需求已明確寫「境內」「境外」或「兩者都要」則不必問。
 
 你的任務是確認是否已有足夠資訊來生成報表。判斷原則：
-- 第一步先確立母體（分析對象是誰）：例如「所有有效台股帳號」、「本分公司名下有交易的客戶」、「全體在職營業員」。若母體範圍不清楚（如不知道要不要限定分公司、有效帳號、特定客群），這是最優先要釐清的問題。
+- 第一步先確立母體（分析對象是誰）：例如「所有有效台股帳號」、「本分公司名下有交易的客戶」、「全體在職營業員」。★ 母體不明確時絕對不得 confirm，必須 ask。★
 - 確立母體後，再確認粒度（每列代表什麼）、指標（要算什麼）、時間範圍、篩選條件。
 - 若有任何真正無法從需求或歷史案例中判斷的關鍵資訊 → status="ask"，提一個最重要的問題。
 - 若資訊已足夠（可合理推斷）→ status="confirm"，用白話寫出你對整份報表的完整理解。
-- 每次只問一個問題。顯而易見的事情不需要問。盡量 confirm，只有真的不確定才 ask。
+- 每次只問一個問題。顯而易見的事情不需要問。母體明確後，其餘部分盡量 confirm，只有真的不確定才 ask。
 
 輸出 JSON（不要其他文字）：
 {{
@@ -157,7 +157,14 @@ def plan_report(
 
 def fmt_plan_for_user(plan: ReportPlan) -> str:
     """轉成業務員看得懂的確認文字。"""
-    return plan.understanding or f"每一列代表：{plan.granularity_detail}"
+    parts = []
+    if plan.base_population:
+        parts.append(f"分析對象：{plan.base_population}")
+    if plan.understanding:
+        parts.append(plan.understanding)
+    elif plan.granularity_detail:
+        parts.append(f"每一列代表：{plan.granularity_detail}")
+    return "\n".join(parts) if parts else ""
 
 
 def fmt_plan_for_prompt(plan: ReportPlan) -> str:
