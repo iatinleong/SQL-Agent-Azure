@@ -854,6 +854,8 @@ def _rewrite_block(
                     "作為篩選上限，否則查詢結果為空。"
                     "取最新 SNAP_YYYYMM 時使用 TO_CHAR(TRUNC(SYSDATE-1,'MM'),'YYYYMM')；"
                     "禁止用 ADD_MONTHS(TRUNC(SYSDATE,'MM'),-1)，那會得到上個月而非最新月份。"
+                    "★ 取參考表（帳戶、名稱、標籤等）最新快照時，必須用子查詢 MAX(snap_yyyymm) 搭配上限 <= TO_CHAR(TRUNC(SYSDATE-1,'MM'),'YYYYMM')；"
+                    "禁止用 ADD_MONTHS(...,-N) 固定回推 N 個月，那會取到 N 個月前的舊資料而非最新可用快照。"
                 ),
             },
             {"role": "user", "content": "\n\n".join(parts)},
@@ -906,6 +908,8 @@ def _fix_with_llm(sql: str, errors: list[str], model: str, schema_hint: str = ""
                     "作為篩選上限，否則查詢結果為空。"
                     "取最新 SNAP_YYYYMM 時使用 TO_CHAR(TRUNC(SYSDATE-1,'MM'),'YYYYMM')；"
                     "禁止用 ADD_MONTHS(TRUNC(SYSDATE,'MM'),-1)，那會得到上個月而非最新月份。"
+                    "★ 取參考表（帳戶、名稱、標籤等）最新快照時，必須用子查詢 MAX(snap_yyyymm) 搭配上限 <= TO_CHAR(TRUNC(SYSDATE-1,'MM'),'YYYYMM')；"
+                    "禁止用 ADD_MONTHS(...,-N) 固定回推 N 個月，那會取到 N 個月前的舊資料而非最新可用快照。"
                 ),
             },
             {
