@@ -46,7 +46,7 @@
   {
     "name": "市佔率",
     "trigger_keywords": ["市佔率", "市占率", "market share", "bps", "市場佔有率", "市佔", "全市場成交", "市場成交量", "market_stock_txns"],
-    "expression": "ROUND(SUM(txn_amt_twd) / SUM(market_stock_txns) * 10000, 2)  -- 單位：bps（基點）",
+    "expression": "ROUND(SUM(txn_amt_twd) / NULLIF(SUM(market_stock_txns), 0) * 10000, 2)  -- 單位：bps（基點）；NULLIF 防止分母為 0 時 ORA-01476",
     "source_options": [
       {
         "table": "M_AT_STOCK_TXN（分子，台股現貨）+ M_RF_MARKET_SHARE（分母）",
@@ -59,7 +59,7 @@
         "note": "期權市佔：分子用 M_AT_FUTURE_TXN，分母用 M_RF_MARKET_SHARE WHERE MARKET_INFO_CODE = '003'"
       }
     ],
-    "llm_instruction": "市佔率單位為 bps（基點）：ROUND(SUM(txn_amt_twd) / SUM(market_stock_txns) * 10000, 2)，欄位別名寫「市佔率(bps)」。分子分母必須口徑一致且對齊相同時間範圍。分子來源依商品類型選擇對應的交易明細表（不用 M_AC_ACCOUNT_REVENUE，避免跨商品混算）：台股現貨市佔用 M_AT_STOCK_TXN（對應分母 MARKET_INFO_CODE='001'）；期權市佔用 M_AT_FUTURE_TXN（對應分母 MARKET_INFO_CODE='003'）；融資市佔用 M_AT_STOCK_TXN 加融資條件（對應分母 MARKET_INFO_CODE='002'）。預設為台股現貨市佔。分母標準寫法：子查詢對 M_RF_MARKET_SHARE 在相同日期範圍加 WHERE MARKET_INFO_CODE = '001' 取 SUM(market_stock_txns) 作為純量，或 CROSS JOIN 帶入每列。M_RF_MARKET_SHARE 無帳號維度，不能直接 JOIN 業務表帳號欄。"
+    "llm_instruction": "市佔率單位為 bps（基點）：ROUND(SUM(txn_amt_twd) / NULLIF(SUM(market_stock_txns), 0) * 10000, 2)，欄位別名寫「市佔率(bps)」。★ 分母必須用 NULLIF(..., 0) 包裹，防止分母為 0 或 NULL 時觸發 ORA-01476。★ 分子分母必須口徑一致且對齊相同時間範圍。分子來源依商品類型選擇對應的交易明細表（不用 M_AC_ACCOUNT_REVENUE，避免跨商品混算）：台股現貨市佔用 M_AT_STOCK_TXN（對應分母 MARKET_INFO_CODE='001'）；期權市佔用 M_AT_FUTURE_TXN（對應分母 MARKET_INFO_CODE='003'）；融資市佔用 M_AT_STOCK_TXN 加融資條件（對應分母 MARKET_INFO_CODE='002'）。預設為台股現貨市佔。分母標準寫法：子查詢對 M_RF_MARKET_SHARE 在相同日期範圍加 WHERE MARKET_INFO_CODE = '001' 取 SUM(market_stock_txns) 作為純量，或 CROSS JOIN 帶入每列。M_RF_MARKET_SHARE 無帳號維度，不能直接 JOIN 業務表帳號欄。"
   },
   {
     "name": "不重複客戶數",
