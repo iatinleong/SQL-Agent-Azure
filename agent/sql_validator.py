@@ -605,10 +605,38 @@ def _check_mask_misuse(sql: str) -> list[str]:
     return errors
 
 
+# ── 未來 YYYYMM 靜態掃描 ────────────────────────────────────────────
+
+def _check_future_yyyymm(sql: str) -> list[str]:
+    """Flag hardcoded YYYYMM string literals that are in the future (Asia/Taipei).
+    Future YYYYMM values in snap_yyyymm conditions silently return 0 rows.
+    """
+    import re
+    from datetime import datetime as _dt, timezone, timedelta
+
+    _taipei = timezone(timedelta(hours=8))
+    today_yyyymm = _dt.now(_taipei).strftime("%Y%m")
+
+    errors: list[str] = []
+    # Match quoted 6-digit YYYYMM values: year 20xx, month 01-12
+    pattern = re.compile(r"'(20\d{2}(?:0[1-9]|1[0-2]))'")
+    seen: set[str] = set()
+    for m in pattern.finditer(sql):
+        val = m.group(1)
+        if val > today_yyyymm and val not in seen:
+            seen.add(val)
+            errors.append(
+                f"[語意] 硬碼未來月份 '{val}'（今日 {today_yyyymm}）：該月尚無資料，"
+                "相關 CTE 將回傳零筆。若意圖取最新快照請改用 MAX(snap_yyyymm) 子查詢；"
+                "若是報表指定區間請確認月份正確。"
+            )
+    return errors
+
+
 # ── 全套錯誤收集 ────────────────────────────────────────────────────
 
 def _collect_all_errors(sql: str) -> list[str]:
-    """依序執行所有驗證：語法 → Oracle quirk → schema prefix → 幻覺 → sqlfluff。
+    """依序執行所有驗證：語法 → Oracle quirk → schema prefix → 幻覺 → 未來月份 → sqlfluff。
     sqlglot parse 失敗時，AST 類 check 無意義，直接回傳語法錯誤。
     """
     glot_errors = _run_sqlglot(sql)
@@ -621,6 +649,7 @@ def _collect_all_errors(sql: str) -> list[str]:
     errors += _check_oracle_quirks(sql)
     errors += _check_dm_s_view_prefix(sql)
     errors += check_hallucination(sql)
+    errors += _check_future_yyyymm(sql)
     errors += _run_sqlfluff(sql)
     return errors
 
@@ -843,7 +872,8 @@ def _rewrite_block(
                         if is_final else
                         "只輸出修正後的 CTE body SQL（括號內的 SELECT 語句），不要說明，不要 markdown fence。\n"
                     )
-                    + "嚴格遵守：禁止移除或改名【必須保留的輸出欄位】中列出的欄位。\n\n"
+                    + "嚴格遵守：禁止移除或改名【必須保留的輸出欄位】中列出的欄位。\n"
+                    "★ 禁止自我別名：不要寫 col AS col（欄位名與別名完全相同是多餘的，sqlfluff AL09 規則會報錯）。\n\n"
                     + "【Schema 規則】所有表格一律加上 DM_S_VIEW schema 前綴"
                     "（例如 DM_S_VIEW.M_AC_ACCOUNT），"
                     "唯一例外：表格名稱本身已含有其他 schema 前綴則保持原樣。\n\n"
