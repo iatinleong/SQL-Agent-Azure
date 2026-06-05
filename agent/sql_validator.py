@@ -253,6 +253,8 @@ def check_hallucination(sql: str) -> list[str]:
         if raw_name.upper() in _ORACLE_SYSTEM_TABLES:
             continue
         if normalized not in schema_lookup and normalized not in seen_table_errors:
+            if "." in normalized:  # 非 DM_S_VIEW 的外部 schema 表（如 S_ARIELSHAO.*），信任不報幻覺
+                continue
             seen_table_errors.add(normalized)
             errors.append(f"[幻覺] 表格不存在於 schema：{normalized}")
 
