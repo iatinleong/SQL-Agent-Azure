@@ -878,7 +878,8 @@ def _rewrite_block(
                         "只輸出修正後的 CTE body SQL（括號內的 SELECT 語句），不要說明，不要 markdown fence。\n"
                     )
                     + "嚴格遵守：禁止移除或改名【必須保留的輸出欄位】中列出的欄位。\n"
-                    "★ 禁止自我別名：不要寫 col AS col（欄位名與別名完全相同是多餘的，sqlfluff AL09 規則會報錯）。\n\n"
+                    "★ 禁止自我別名：不要寫 col AS col（欄位名與別名完全相同是多餘的，sqlfluff AL09 規則會報錯）。\n"
+                    "★ 禁止 CTE 雙層括號：CTE body 本身已由外層括號包裹，不要再加一層（錯誤：CTE AS ((SELECT...))，正確：CTE AS (SELECT...)）。\n\n"
                     + "【Schema 規則】所有表格一律加上 DM_S_VIEW schema 前綴"
                     "（例如 DM_S_VIEW.M_AC_ACCOUNT），"
                     "唯一例外：表格名稱本身已含有其他 schema 前綴則保持原樣。\n\n"
