@@ -7,6 +7,7 @@
   python -m agent --generate "需求文字"    完整生成（Phase 1 + Phase 2 + Step A + Step B）
   python -m agent --summarize              批次產出所有案例的業務摘要（需先跑一次）
   python -m agent --test                   10 案例批次評測（Phase 1 + Phase 2）
+  python -m agent --e2e-test               端對端測試（planner + generate + validate）
   python -m agent --schema-summarize          批次產出所有 schema 表格說明
   python -m agent --schema-summarize TABLE    只跑指定表格
   python -m agent --eval-table-selection      LLM table selection 準確度評測
@@ -87,6 +88,11 @@ def main(argv: list[str] | None = None) -> None:
     if args and args[0] == "--test":
         from .batch_test import main as batch_main
         batch_main()
+        return
+
+    if args and args[0] == "--e2e-test":
+        from .e2e_test import main as e2e_main
+        e2e_main()
         return
 
     if args and args[0] == "--eval-retrieval":
