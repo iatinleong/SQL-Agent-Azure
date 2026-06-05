@@ -283,11 +283,16 @@ def check_hallucination(sql: str) -> list[str]:
 
     # 5. 驗證無限定詞的欄位（對查詢中所有已知表格的欄位聯集比對）
     all_query_cols: set[str] = set()
+    has_external_tables = False
     for tname in set(alias_map.values()):
-        if tname in schema_lookup:
+        if not tname:
+            continue
+        if "." in tname and tname not in schema_lookup:
+            has_external_tables = True   # S_ARIELSHAO.* 等外部表，欄位未知，跳過 unqualified 檢查
+        elif tname in schema_lookup:
             all_query_cols.update(schema_lookup[tname])
 
-    if all_query_cols:
+    if all_query_cols and not has_external_tables:
         seen_unqualified_errors: set[str] = set()
         for cnode in tree.find_all(exp.Column):
             col_name = (cnode.name or "").upper()

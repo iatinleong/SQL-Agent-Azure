@@ -85,11 +85,38 @@ CASES: list[E2ECase] = [
         direct_expect_error_prefixes=["[語意]"],
     ),
     E2ECase(
+        id="e2e-06",
+        label="外部 schema 表欄位 → 不報幻覺（S_ARIELSHAO.* / S_CHIAHSUANHSU.*）",
+        direct_sql="""
+            WITH grp AS (
+                SELECT acct_nbr
+                FROM S_ARIELSHAO.CUSTOMER_GROUP_2026Q1
+                WHERE NVL(customer_group,'Z') IN ('A','B','C')
+            ),
+            names AS (
+                SELECT DISTINCT acct_nbr, party_name
+                FROM S_CHIAHSUANHSU.PARTY_NAME
+            ),
+            base AS (
+                SELECT a.acct_nbr, a.branch_code
+                FROM DM_S_VIEW.M_AC_ACCOUNT a
+                INNER JOIN grp g ON a.acct_nbr = g.acct_nbr
+                WHERE a.prod_type_code = '100'
+                  AND a.acct_valid_flag = 'Y'
+            )
+            SELECT b.acct_nbr, n.party_name
+            FROM base b
+            LEFT JOIN names n ON b.acct_nbr = n.acct_nbr
+        """,
+        direct_expect_error_prefixes=[],  # 不應有任何幻覺錯誤
+    ),
+    E2ECase(
         id="e2e-04",
         label="bps市佔率（完整流程）",
         requirement=(
             "查2025年整年度南港分公司所有有台股現貨交易的帳號，"
-            "計算每個帳號的年度交易量和年度台股現貨市佔率（bps）"
+            "計算每個帳號2025全年成交量加總，"
+            "以及以全市場2025全年台股現貨總成交量為分母算出的年度市佔率（單位bps，即×10000）"
         ),
         expect_plan_status="confirm",
         check_base_population=True,
@@ -210,12 +237,22 @@ def _run_case(case: E2ECase, all_cases: list[dict]) -> list[_Check]:
     if case.direct_sql is not None:
         from .sql_validator import validate_sql, _clean
         errors = validate_sql(_clean(case.direct_sql))
-        for prefix in case.direct_expect_error_prefixes:
-            hit = next((e for e in errors if e.startswith(prefix)), None)
+        hallucination_errors = [e for e in errors if e.startswith("[幻覺]")]
+        if case.direct_expect_error_prefixes:
+            # 有指定應出現的錯誤
+            for prefix in case.direct_expect_error_prefixes:
+                hit = next((e for e in errors if e.startswith(prefix)), None)
+                checks.append(_Check(
+                    f"validator 出現 {prefix}",
+                    hit is not None,
+                    hit or f"errors={errors[:3]}",
+                ))
+        else:
+            # 空 list 代表期望無幻覺錯誤
             checks.append(_Check(
-                f"validator 出現 {prefix}",
-                hit is not None,
-                hit or f"errors={errors[:3]}",
+                "無 [幻覺] 錯誤（外部 schema 表白名單正常）",
+                len(hallucination_errors) == 0,
+                "; ".join(hallucination_errors) if hallucination_errors else "(clean)",
             ))
         return checks
 
