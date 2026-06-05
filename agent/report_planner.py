@@ -113,7 +113,7 @@ def plan_report(
   "base_population": "這份報表的分析對象（母體）是誰，用業務員聽得懂的白話描述，50字以內。例如：『本分公司所有有效台股帳號』、『過去一年有交易紀錄的客戶』",
   "granularity": "帳戶|客戶|營業員|分公司|其他",
   "granularity_detail": "每一列代表什麼，用業務員聽得懂的話說明，50字以內",
-  "understanding": "若 status=confirm：用業務員聽得懂的白話說明這份報表要呈現什麼，包含母體範圍、時間範圍、篩選條件、排列方式、每列代表什麼；絕對不可出現任何資料表名稱、欄位英文名稱或任何技術術語；否則空字串",
+  "understanding": "若 status=confirm：以下列固定格式逐項列出（每項一行，無資訊的項目可省略），絕對不可出現任何資料表名稱、欄位英文名稱或技術術語：\n母體：...\n顆粒度：...\n時間範圍：...\n指標：...\n篩選條件：...\n排序方式：...\n否則空字串",
   "tables": "若 status=confirm：從【參考資料 3：可用欄位定義】中，選出這份報表可能需要用到的表格英文名稱清單，例如 ['M_AC_ACCOUNT', 'M_AT_STOCK_TXN']；否則空陣列 []"
 }}"""
 
@@ -157,13 +157,14 @@ def plan_report(
 
 def fmt_plan_for_user(plan: ReportPlan) -> str:
     """轉成業務員看得懂的確認文字。"""
+    if plan.understanding:
+        return plan.understanding
+    # fallback：understanding 為空時（舊格式相容）
     parts = []
     if plan.base_population:
-        parts.append(f"分析對象：{plan.base_population}")
-    if plan.understanding:
-        parts.append(plan.understanding)
-    elif plan.granularity_detail:
-        parts.append(f"每一列代表：{plan.granularity_detail}")
+        parts.append(f"母體：{plan.base_population}")
+    if plan.granularity_detail:
+        parts.append(f"顆粒度：{plan.granularity_detail}")
     return "\n".join(parts) if parts else ""
 
 
