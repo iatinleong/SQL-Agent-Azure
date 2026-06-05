@@ -33,7 +33,7 @@
     "name": "客群貼標",
     "trigger_scenes": ["精準行銷與專案名單篩選"],
     "trigger_keywords": ["客群", "貼標"],
-    "rule": "【現行版本】經紀客群貼標表: S_ARIELSHAO.CUSTOMER_GROUP_2026Q1 (JOIN ON ACCT_NBR, 欄位名: CUSTOMER_GROUP 或 客群)。財管客群: M_AC_ACCOUNT.NW_SEGMENT_DESC (如'價值Plus') 可直接篩選。財管客群貼標_ID: S_MELODYJJJIAN.CUSTOMER_GROUP_2026 (JOIN ON PARTY_ID AND 分公司代碼)。客戶名稱: S_CHIAHSUANHSU.PARTY_NAME (LEFT JOIN ON ACCT_NBR)"
+    "rule": "【現行版本】經紀客群貼標表: S_ARIELSHAO.CUSTOMER_GROUP_2026Q1 (JOIN ON ACCT_NBR, 欄位名: CUSTOMER_GROUP 或 客群)。財管客群: M_AC_ACCOUNT.NW_SEGMENT_DESC (如'價值Plus') 可直接篩選。財管客群貼標_ID: S_MELODYJJJIAN.CUSTOMER_GROUP_2026 (JOIN ON PARTY_ID AND 分公司代碼)。客戶名稱: S_CHIAHSUANHSU.PARTY_NAME (LEFT JOIN ON ACCT_NBR)。⚠️ 快照日期: 客群標籤表有快照欄位時，★使用 SNAP_YYYYMM 而非 SNAPDATE★（與庫存表相同邏輯），取最新期用 MAX(SNAP_YYYYMM)"
   },
   {
     "name": "開戶分析",
