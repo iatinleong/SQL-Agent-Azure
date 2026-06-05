@@ -696,8 +696,11 @@ def _llm_review(
         reviewing broken SQL produces unreliable semantic judgments.
     """
     import json as _json
+    from datetime import datetime as _datetime, timezone, timedelta
     from .generator import _chat
 
+    _taipei = timezone(timedelta(hours=8))
+    today_yyyymm = _datetime.now(_taipei).strftime("%Y%m")
     valid_block_names = {b.name for b in registry.blocks}
 
     block_lines = []
@@ -731,7 +734,12 @@ def _llm_review(
                     "- GROUP BY 一致性：SELECT 出現的非聚合欄位都必須出現在 GROUP BY。\n"
                     "- CTE 欄位契約：下游 block 引用的欄位必須在上游 CTE 有輸出。\n"
                     "- 聚合粒度：確認 SUM/COUNT 的粒度與需求一致，沒有重複計算或遺漏 JOIN。\n"
-                    "- 日期篩選：有快照日期欄位的表格通常需要篩選 snap_date 或 snap_yyyymm。\n\n"
+                    "- 快照日期規則（今日台北時間 YYYYMM = " + today_yyyymm + "）：\n"
+                    "  • snap_yyyymm 條件若硬碼大於今日的未來月份（例如今日 " + today_yyyymm + " 卻寫 snap_yyyymm = '202612'），該月尚無資料，該 CTE 回傳零筆；應確認月份是否為報表明確指定，若是取最新快照請改用 MAX(snap_yyyymm) 子查詢。\n"
+                    "  • M_AC_ACCOUNT、M_AC_ACCOUNT_INFO、M_AC_ACCOUNT_SEGMENT 同時有 snap_date（DATE）與 snap_yyyymm（VARCHAR）；月份快照篩選應以 snap_yyyymm 做等值比較，不應用 snap_date 做月份等值比較（DATE 含時間成分易不符）。\n"
+                    "  • 以 ADD_MONTHS(TRUNC(SYSDATE,...), -N) 等值比較 snap_yyyymm 取「最新快照」是錯誤的（會取到 N 個月前舊資料）；應改用子查詢 MAX(snap_yyyymm) 搭配上限 <= TO_CHAR(TRUNC(SYSDATE-1,'MM'),'YYYYMM')。\n"
+                    "- 基金查詢：M_AT_FUND_TXN 若報表意圖為「基金（不含ETF）」，WHERE 必須加 NVL(prod_stype_code,'000') <> '029' 排除 ETF 募集記錄；若未加，結果會多算 ETF 募集。\n"
+                    "- 母體完整性：若 SQL 有定義客戶/帳戶母體 CTE（如客群標籤、Segment、白名單），最終 JOIN 應以母體 CTE 為驅動表再 LEFT JOIN 交易；若反過來以交易表為驅動（INNER JOIN 母體），零交易的母體成員會被漏掉。\n\n"
                     "【不要回報】\n"
                     "- 語法錯誤、schema prefix 缺失、幻覺欄位（rule checker 已處理）\n"
                     "- 已在【已知錯誤】中提到的問題\n\n"
@@ -856,6 +864,8 @@ def _rewrite_block(
                     "禁止用 ADD_MONTHS(TRUNC(SYSDATE,'MM'),-1)，那會得到上個月而非最新月份。"
                     "★ 取參考表（帳戶、名稱、標籤等）最新快照時，必須用子查詢 MAX(snap_yyyymm) 搭配上限 <= TO_CHAR(TRUNC(SYSDATE-1,'MM'),'YYYYMM')；"
                     "禁止用 ADD_MONTHS(...,-N) 固定回推 N 個月，那會取到 N 個月前的舊資料而非最新可用快照。"
+                    "★ 禁止在 snap_yyyymm 條件中寫入尚未到達的未來月份（如今年 6 月就寫 '202612'），未來月份無資料會導致 CTE 回傳零筆；取某年度最新快照請用 MAX(snap_yyyymm) WHERE snap_yyyymm BETWEEN '起始月' AND '結束月'。"
+                    "★ 帳戶快照欄位：M_AC_ACCOUNT、M_AC_ACCOUNT_INFO、M_AC_ACCOUNT_SEGMENT 同時有 snap_date（DATE）和 snap_yyyymm（VARCHAR）；月份快照篩選和 ROW_NUMBER() 排序應使用 snap_yyyymm，不應以 snap_date 做月份等值比較（DATE 含時間成分）。M_RF_MARKET_SHARE 使用 snap_date（DATE）做日期篩選。"
                 ),
             },
             {"role": "user", "content": "\n\n".join(parts)},
@@ -910,6 +920,8 @@ def _fix_with_llm(sql: str, errors: list[str], model: str, schema_hint: str = ""
                     "禁止用 ADD_MONTHS(TRUNC(SYSDATE,'MM'),-1)，那會得到上個月而非最新月份。"
                     "★ 取參考表（帳戶、名稱、標籤等）最新快照時，必須用子查詢 MAX(snap_yyyymm) 搭配上限 <= TO_CHAR(TRUNC(SYSDATE-1,'MM'),'YYYYMM')；"
                     "禁止用 ADD_MONTHS(...,-N) 固定回推 N 個月，那會取到 N 個月前的舊資料而非最新可用快照。"
+                    "★ 禁止在 snap_yyyymm 條件中寫入尚未到達的未來月份（如今年 6 月就寫 '202612'），未來月份無資料會導致 CTE 回傳零筆；取某年度最新快照請用 MAX(snap_yyyymm) WHERE snap_yyyymm BETWEEN '起始月' AND '結束月'。"
+                    "★ 帳戶快照欄位：M_AC_ACCOUNT、M_AC_ACCOUNT_INFO、M_AC_ACCOUNT_SEGMENT 同時有 snap_date（DATE）和 snap_yyyymm（VARCHAR）；月份快照篩選和 ROW_NUMBER() 排序應使用 snap_yyyymm，不應以 snap_date 做月份等值比較（DATE 含時間成分）。M_RF_MARKET_SHARE 使用 snap_date（DATE）做日期篩選。"
                 ),
             },
             {
