@@ -875,15 +875,9 @@ def _build_schema_hint(sql: str) -> str:
 
 
 def _build_schema_hint_for_tables(table_names: list[str]) -> str:
-    """回傳指定表格的欄位清單（供 LLM 修正時參考）。"""
-    schema_lookup = _load_schema_lookup()
-    lines = []
-    for tname in table_names:
-        key = tname.upper()
-        if key in schema_lookup:
-            cols = ", ".join(sorted(schema_lookup[key]))
-            lines.append(f"{key}：{cols}")
-    return "\n".join(lines)
+    """回傳指定表格的完整欄位定義（含中文名稱、欄位說明、代碼對照），供 repair LLM 參考。"""
+    from .generator import _load_schema_for_tables
+    return _load_schema_for_tables(table_names)
 
 
 # ── LLM Reviewer（語意審查）─────────────────────────────────────────
