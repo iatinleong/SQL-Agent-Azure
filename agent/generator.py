@@ -104,7 +104,7 @@ def _load_schema_for_tables(table_names: list[str]) -> str:
             defn = row.get("欄位定義說明", "")
             pk = "PK  " if row.get("Primary Key", "") == "PK" else "    "
             col_codes = col_code_map.get(col.upper(), {})
-            already_in_defn = sum(1 for k in col_codes if k in defn) >= 2
+            already_in_defn = sum(1 for k in col_codes if k in defn) >= 1
             all_same_desc = len(set(col_codes.values())) <= 1
             code_hint = (
                 f"  {_fmt_codes(col_codes)}"
