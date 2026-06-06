@@ -642,11 +642,101 @@ def _load_table_col_codes() -> dict[tuple[str, str], set[str]]:
     return result
 
 
-def _check_column_code_values(sql: str) -> list[str]:
+def _build_local_alias_map(
+    scope_node,
+    cte_names: set[str],
+) -> dict[str, str]:
+    """在單一 scope（CTE body 或 final SELECT）內建立 alias → 正規化表格名。
+    只看該 scope 節點下的 Table 節點，避免跨 CTE 汙染。
     """
-    對 WHERE 條件中的字串字面值，比對 schema.csv 每張 table 該欄位的合法代碼集合。
-    若出現不在合法集合內的代碼，回傳 [語意] 錯誤。
-    僅檢查有限定表格別名的欄位（col.table 可解析）。
+    try:
+        from sqlglot import exp
+    except ImportError:
+        return {}
+    alias_map: dict[str, str] = {}
+    for tnode in scope_node.find_all(exp.Table):
+        raw = tnode.name or ""
+        if not raw:
+            continue
+        normalized = _normalize_table(tnode.db or "", raw)
+        if normalized in cte_names or raw.upper() in cte_names:
+            continue
+        alias = (tnode.alias or "").upper()
+        key = alias if alias else raw.upper()
+        alias_map[key] = normalized
+        alias_map[raw.upper()] = normalized
+        alias_map[normalized] = normalized
+    return alias_map
+
+
+def _scan_conditions(
+    scope_node,
+    alias_map: dict[str, str],
+    cte_names: set[str],
+    table_col_codes: dict[tuple[str, str], set[str]],
+    block_prefix: str,
+    seen: set[str],
+    exclude_ids: set[int] | None = None,
+) -> list[str]:
+    """在單一 scope 內掃描 EQ / IN 條件，回傳不合法代碼的錯誤訊息。
+    exclude_ids: 要跳過的節點 id 集合（用來避免 final_select 重複掃描 CTE body）。
+    """
+    try:
+        from sqlglot import exp
+    except ImportError:
+        return []
+    errors: list[str] = []
+    for node in scope_node.walk():
+        if exclude_ids and id(node) in exclude_ids:
+            continue
+        pairs: list[tuple] = []
+        if isinstance(node, exp.EQ):
+            col_node = node.left  if isinstance(node.left,  exp.Column) else (
+                       node.right if isinstance(node.right, exp.Column) else None)
+            lit_node = node.right if isinstance(node.right, exp.Literal) else (
+                       node.left  if isinstance(node.left,  exp.Literal) else None)
+            if col_node and lit_node and lit_node.is_string:
+                pairs.append((col_node, [lit_node.this]))
+        elif isinstance(node, exp.In):
+            col_node = node.this if isinstance(node.this, exp.Column) else None
+            if col_node:
+                vals = [e.this for e in node.expressions
+                        if isinstance(e, exp.Literal) and e.is_string]
+                if vals:
+                    pairs.append((col_node, vals))
+
+        for col_node, vals in pairs:
+            col_name  = (col_node.name  or "").upper()
+            qualifier = (col_node.table or "").upper()
+            if not col_name or not qualifier:
+                continue
+            if qualifier in cte_names:
+                continue
+            table = alias_map.get(qualifier, "")
+            if not table:
+                continue
+            valid = table_col_codes.get((table, col_name))
+            if valid is None:
+                continue
+            bad = [v for v in vals if v not in valid]
+            if not bad:
+                continue
+            key = f"{table}.{col_name}.{'|'.join(sorted(bad))}"
+            if key in seen:
+                continue
+            seen.add(key)
+            errors.append(
+                f"{block_prefix} [語意] {table}.{col_name} "
+                f"出現不合法代碼 {bad}，"
+                f"該表只允許：{sorted(valid)}"
+            )
+    return errors
+
+
+def _check_column_code_values(sql: str) -> list[str]:
+    """逐 CTE block 掃描 WHERE 條件中的字串字面值，比對 schema.csv 合法代碼集合。
+    每個 block 各自建立 alias_map，避免跨 CTE alias 汙染。
+    錯誤訊息帶 [block=cte:NAME] / [block=final_select] 前綴，方便 BlockRegistry 歸因。
     """
     try:
         import sqlglot
@@ -660,82 +750,34 @@ def _check_column_code_values(sql: str) -> list[str]:
         return []
 
     table_col_codes = _load_table_col_codes()
-
-    # 建立 alias → 正規化表格名
     cte_names: set[str] = {c.alias_or_name.upper() for c in tree.find_all(exp.CTE)}
-    alias_map: dict[str, str] = {}
-    for tnode in tree.find_all(exp.Table):
-        raw = tnode.name or ""
-        if not raw:
-            continue
-        normalized = _normalize_table(tnode.db or "", raw)
-        if normalized in cte_names or raw.upper() in cte_names:
-            continue
-        alias = (tnode.alias or "").upper()
-        key = alias if alias else raw.upper()
-        alias_map[key] = normalized
-        alias_map[raw.upper()] = normalized
-        alias_map[normalized] = normalized
-
     errors: list[str] = []
     seen: set[str] = set()
 
-    # 找 EQ / IN 條件裡的字串字面值
-    for node in tree.walk():
-        # col = 'val'
-        if isinstance(node, exp.EQ):
-            col_node = node.left if isinstance(node.left, exp.Column) else (
-                       node.right if isinstance(node.right, exp.Column) else None)
-            lit_node = node.right if isinstance(node.right, exp.Literal) else (
-                       node.left  if isinstance(node.left,  exp.Literal) else None)
-            if col_node and lit_node and lit_node.is_string:
-                _check_val(col_node, [lit_node.this], alias_map, cte_names,
-                           table_col_codes, errors, seen)
-        # col IN ('a', 'b', ...)
-        elif isinstance(node, exp.In):
-            col_node = node.this if isinstance(node.this, exp.Column) else None
-            if col_node:
-                vals = [e.this for e in node.expressions if isinstance(e, exp.Literal) and e.is_string]
-                if vals:
-                    _check_val(col_node, vals, alias_map, cte_names,
-                               table_col_codes, errors, seen)
+    # 收集所有 CTE body 節點的 id，供 final_select 掃描時排除
+    cte_body_ids: set[int] = set()
+
+    # 逐 CTE block
+    for cte in tree.find_all(exp.CTE):
+        block_name = cte.alias_or_name.upper()
+        scope = cte.this  # CTE body (SELECT node)
+        for n in scope.walk():
+            cte_body_ids.add(id(n))
+        alias_map = _build_local_alias_map(scope, cte_names)
+        errors += _scan_conditions(
+            scope, alias_map, cte_names, table_col_codes,
+            f"[block=cte:{block_name}]", seen,
+        )
+
+    # final SELECT（最外層，排除 CTE body 節點以避免重複掃描）
+    alias_map = _build_local_alias_map(tree, cte_names)
+    errors += _scan_conditions(
+        tree, alias_map, cte_names, table_col_codes,
+        "[block=final_select]", seen,
+        exclude_ids=cte_body_ids or None,
+    )
 
     return errors
-
-
-def _check_val(
-    col_node,
-    vals: list[str],
-    alias_map: dict[str, str],
-    cte_names: set[str],
-    table_col_codes: dict[tuple[str, str], set[str]],
-    errors: list[str],
-    seen: set[str],
-) -> None:
-    import sqlglot.expressions as exp
-    col_name  = (col_node.name or "").upper()
-    qualifier = (col_node.table or "").upper()
-    if not col_name or not qualifier:
-        return
-    if qualifier in cte_names:
-        return
-    table = alias_map.get(qualifier, "")
-    if not table:
-        return
-    valid = table_col_codes.get((table, col_name))
-    if valid is None:
-        return  # 這個 table+col 無代碼定義，跳過
-    bad = [v for v in vals if v not in valid]
-    if not bad:
-        return
-    key = f"{table}.{col_name}.{'|'.join(sorted(bad))}"
-    if key in seen:
-        return
-    seen.add(key)
-    errors.append(
-        f"[語意] {table}.{col_name} 出現不合法代碼 {bad}，"
-        f"該表只允許：{sorted(valid)}"
-    )
 
 
 # ── 未來 YYYYMM 靜態掃描 ────────────────────────────────────────────
