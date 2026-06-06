@@ -572,7 +572,8 @@ def generate(
     print(f"\n{SEP}")
     print("=== Step B：SQL 驗證（語法 + schema prefix + 幻覺）===")
     final_sql, step_c_log, fix_tokens = validate_and_fix(
-        final_sql, model=VALIDATOR_MODEL, max_iter=2
+        final_sql, model=VALIDATOR_MODEL, max_iter=2,
+        requirement=requirement,
     )
     for entry in step_c_log:
         if "auto_fixes" in entry:

@@ -188,6 +188,8 @@ class BlockRegistry:
         return [self._tag_one(e) for e in errors]
 
     def _tag_one(self, error: str) -> str:
+        if error.startswith("[block="):  # 已由 validator 標記，避免雙重前綴
+            return error
         name = self._identify_block(error)
         return f"[block={name}] {error}" if name else error
 

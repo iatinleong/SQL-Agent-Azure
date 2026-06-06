@@ -759,7 +759,7 @@ def _check_column_code_values(sql: str) -> list[str]:
 
     # 逐 CTE block
     for cte in tree.find_all(exp.CTE):
-        block_name = cte.alias_or_name.upper()
+        block_name = cte.alias_or_name  # 保留原始大小寫，與 BlockRegistry 一致
         scope = cte.this  # CTE body (SELECT node)
         for n in scope.walk():
             cte_body_ids.add(id(n))
@@ -1014,6 +1014,7 @@ def _rewrite_block(
     upstream_outputs: dict[str, set[str]],
     schema_hint: str,
     model: str,
+    requirement: str = "",
 ) -> tuple[str, dict]:
     """Rewrite a single SQL block to fix the given errors.
     Outputs contract ensures downstream CTE column references survive the rewrite.
@@ -1022,6 +1023,8 @@ def _rewrite_block(
 
     is_final = block_name == "final_select"
     parts: list[str] = [f"【錯誤訊息】\n{chr(10).join(errors)}"]
+    if requirement:
+        parts.append(f"【原始報表需求（業務上下文，修正時請以此為準）】\n{requirement}")
 
     if outputs_contract:
         parts.append(
@@ -1162,6 +1165,7 @@ def validate_and_fix(
     sql: str,
     model: str = VALIDATOR_MODEL,
     max_iter: int = 2,
+    requirement: str = "",
 ) -> tuple[str, list[dict], dict]:
     """
     全套驗證並自動修正，最多 max_iter 輪。
@@ -1265,6 +1269,7 @@ def validate_and_fix(
                 ctx["upstream_outputs"],
                 schema_hint,
                 model,
+                requirement=requirement,
             )
             block = registry.get(block_name)
             if block:
