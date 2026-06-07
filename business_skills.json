@@ -2,79 +2,150 @@
   {
     "name": "庫存查詢",
     "trigger_scenes": [],
-    "trigger_keywords": ["庫存", "持倉", "融資"],
+    "trigger_keywords": [
+      "庫存",
+      "持倉",
+      "融資"
+    ],
     "rule": "庫存/持倉查詢: 用 M_AC_ACCOUNT_INVENTORY，SNAP_YYYYMM 為月份(或取MAX為最新)。融資餘額: INVE_TYPE_CODE='004'。台股庫存: PROD_TYPE_CODE='100'。財管庫存: PROD_MTYPE_CODE IN ('120','210','220','230','240','420','540','6L0')。查詢'財管庫存'或'財管損益'時，除 M_AC_ACCOUNT_INVENTORY 外，★需包含各商品成交金額★: 海外股(M_AT_STOCK_TXN PROD_TYPE_CODE='200')、海外債(M_AT_BOND_TXN)、基金(M_AT_FUND_TXN)、結構型(M_AT_SN_TXN)、壽險(M_AT_INSURANCE_TXN)，各建獨立CTE以LEFT JOIN保持母體完整"
   },
   {
     "name": "例行性報表",
-    "trigger_scenes": ["財管商品業績與例行月報"],
-    "trigger_keywords": ["例行", "月報"],
+    "trigger_scenes": [
+      "財管商品業績與例行月報"
+    ],
+    "trigger_keywords": [
+      "例行",
+      "月報"
+    ],
     "rule": "例行性報表結構(ACCT_NBR粒度): M_AC_ACCOUNT(基礎母體 WHERE BRANCH_CODE+PROD_TYPE_CODE='100'+ACCT_VALID_FLAG='Y') + S_CHIAHSUANHSU.PARTY_NAME(姓名) + S_ARIELSHAO.CUSTOMER_GROUP_2026Q1(經紀客群) + S_MELODYJJJIAN.CUSTOMER_GROUP_2026(財管客群) + 各 M_AT_* 明細表(現貨交易量PIVOT全年12月/海外股/基金/海外債/結構型/壽險/期貨口數/借券/不限用途各自CTE) + M_AC_ACCOUNT_INVENTORY(台股庫存+融資餘額PIVOT全年12月 WHERE INVE_TYPE_CODE='004') + M_AC_ACCOUNT_REVENUE(貢獻度要區分經紀/財管且含2023-2025多年，排除REV_CODE='6L1R01')。業績表(EMP_NBR粒度): M_PT_SALES(EMP_FLAG='Y') 為母體 + 各商品CTE(結構型須拆境內/境外/NPI) + GROUP BY NVL(ACC.EMP_NBR,TXN.EMP_NBR) + CUBE(TXN_YYYYMM) → PIVOT全年12月+FY。⚠️ 必須覆蓋全商品線: 台股(PROD_TYPE_CODE='100')、海外股('200')、基金(M_AT_FUND_TXN)、海外債(M_AT_BOND_TXN)、結構型(M_AT_SN_TXN)、壽險(M_AT_INSURANCE_TXN)、庫存、貢獻度。⚠️ 報表完整度: (1)融資餘額→PIVOT全年12個月(非僅最新); (2)貢獻度→包含多年對比(如2023/2024/2025)且區分經紀/財管; (3)期貨→用TXN_UNIT_QTY(口數)非TXN_AMT_TWD; (4)貢獻度排除REV_CODE='6L1R01'。⚠️ 結構型商品必須區分: (1)境內:PROD_TYPE_CODE='500'; (2)境外:PROD_TYPE_CODE='200'; (3)境內NPI:PROD_CODE LIKE '4FF%'。三者需建獨立CTE。PIVOT全年12月+CUBE(TXN_YYYYMM)產FY合計"
   },
   {
     "name": "月均交易量",
-    "trigger_scenes": ["交易動能趨勢與異動偵測"],
-    "trigger_keywords": ["月均"],
+    "trigger_scenes": [
+      "交易動能趨勢與異動偵測"
+    ],
+    "trigger_keywords": [
+      "月均"
+    ],
     "rule": "月均交易量: 用 M_AT_ACCOUNT_TXN 的 SNAP_YYYYMM 和 TXN_AMT_TWD。GROUP BY ACCT_NBR，用 SUM(TXN_AMT_TWD)/月數 計算月均。注意: 若需依商品細分或加入明細篩選(如CHANNEL_CODE)，改用 M_AT_STOCK_TXN"
   },
   {
     "name": "離職營業員",
-    "trigger_scenes": ["人員異動與客戶移轉管理"],
-    "trigger_keywords": ["離職", "優退"],
+    "trigger_scenes": [
+      "人員異動與客戶移轉管理"
+    ],
+    "trigger_keywords": [
+      "離職",
+      "優退"
+    ],
     "rule": "離職營業員客戶查詢(名單模式優先): 若需求包含『期貨客戶名單/離職營業員名單』，輸出應為★名單★而非綜合報表。必做三來源聯集: (a)名下有效期貨戶 M_AC_ACCOUNT(PROD_TYPE_CODE='300' AND EMP_NBR IN 指定清單); (b)過往交易戶 M_AT_FUTURE_TXN(EMP_NBR IN 指定清單); (c)移轉或公帳線索(如 SALES_NBR='A01')。最終輸出至少包含: 期貨帳號、現任營業員、前任營業員(若可追溯)、來源類型(名下/過往/移轉)。⚠️ '離退營業員移轉客戶'在證券業★不是簡單移轉清單★，而是包含月均交易量(M_AT_ACCOUNT_TXN)、貢獻度(M_AC_ACCOUNT_REVENUE 區分經紀/財管)、各商品庫存(M_AC_ACCOUNT_INVENTORY)的完整客戶報表。★移轉客戶 = SALES_NBR='A01'(掛公帳)★"
   },
   {
     "name": "促轉名單",
-    "trigger_scenes": ["精準行銷與專案名單篩選"],
-    "trigger_keywords": ["促轉"],
+    "trigger_scenes": [
+      "精準行銷與專案名單篩選"
+    ],
+    "trigger_keywords": [
+      "促轉"
+    ],
     "rule": "促轉名單查詢(高精準): 優先使用專案名單來源 ES_PROJECTDATA/ES_PROJECTFILE，依 PROJECT_NO 或 PROJECT_NAME(含促轉)鎖定母體，不可僅以 BANK_CODE<>某值直接替代專案名單。標準結構: BASE=ES_PROJECTDATA JOIN M_AC_ACCOUNT(台股主帳) + 通訊欄位(T_DR_ACCT) + 同客戶複委託/信託帳號(分別以 PROD_TYPE_CODE='200'/'400' 取最近帳號)。交易欄位需分年度區間輸出(如 113/114 或 query 指定期間)，且可加 CHANNEL_CODE 條件"
   },
   {
     "name": "客群貼標",
-    "trigger_scenes": ["精準行銷與專案名單篩選"],
-    "trigger_keywords": ["客群", "貼標"],
+    "trigger_scenes": [
+      "精準行銷與專案名單篩選"
+    ],
+    "trigger_keywords": [
+      "客群",
+      "貼標"
+    ],
     "rule": "【現行版本】經紀客群貼標表: S_ARIELSHAO.CUSTOMER_GROUP_2026Q1 (JOIN ON ACCT_NBR, 欄位名: CUSTOMER_GROUP 或 客群)。財管客群: M_AC_ACCOUNT.NW_SEGMENT_DESC (如'價值Plus') 可直接篩選。財管客群貼標_ID: S_MELODYJJJIAN.CUSTOMER_GROUP_2026 (JOIN ON PARTY_ID AND 分公司代碼)。客戶名稱: S_CHIAHSUANHSU.PARTY_NAME (LEFT JOIN ON ACCT_NBR)。⚠️ 快照日期: 客群標籤表有快照欄位時，★使用 SNAP_YYYYMM 而非 SNAPDATE★（與庫存表相同邏輯），取最新期用 MAX(SNAP_YYYYMM)"
   },
   {
     "name": "開戶分析",
     "trigger_scenes": [],
-    "trigger_keywords": ["開戶"],
+    "trigger_keywords": [
+      "開戶"
+    ],
     "rule": "M_PT_CUSTOMER 有客戶年齡(AGE)等個人資訊。CLOSE_REASON_CODE='007'表示分公司消滅(通常需排除)。★開戶數分佈★: 若提及'分佈'或'年齡'→粒度=年齡層(非分公司)，標準結構: CTE: M_AC_ACCOUNT JOIN M_PT_CUSTOMER(AGE IS NOT NULL) + CASE WHEN AGE分段 → SELECT AGE_GROUP, COUNT(ACCT_NBR) AS 戶數, 比例, COUNT(CASE WHEN ACCT_VALID_FLAG='Y' AND CLOSE_DATE IS NULL THEN 1)有效戶 + LEFT JOIN PROD_TYPE_CODE='300' 比對加開期貨戶 → GROUP BY CUBE(AGE_GROUP) ORDER BY DECODE排序。'開戶分佈'★絕非按分公司或月份PIVOT★"
   },
   {
     "name": "股利配息",
     "trigger_scenes": [],
-    "trigger_keywords": ["股利", "配息"],
+    "trigger_keywords": [
+      "股利",
+      "配息"
+    ],
     "rule": "股利/配息查詢: ★必須用 M_AT_DIV★。PROD_MTYPE_CODE='110'(台股股利)/'230'(海外債配息)/'540'(境內結構型配息)。最近配息日: RANK() OVER (PARTITION BY ACCT_NBR ORDER BY DIV_DATE DESC) = 1 取 DIV_DATE+DIV_AMT_TWD。累計配息: M_AC_ACCOUNT_INVENTORY.DIV_ACCU_AMT_TWD 或 M_AT_DIV.ACCU_DIV_AMT_TWD。債券庫存: M_AC_ACCOUNT_INVENTORY WHERE PROD_MTYPE_CODE='230', GROUP BY ACCT_NBR+CURRENCY_NAME"
   },
   {
     "name": "月度PIVOT報表",
     "trigger_scenes": [],
-    "trigger_keywords": ["pivot", "月度"],
+    "trigger_keywords": [
+      "pivot",
+      "月度"
+    ],
     "rule": "Oracle PIVOT: SELECT * FROM (子查詢) PIVOT (SUM(金額) FOR 月份欄位 IN ('202501' AS JAN, '202502' AS FEB, ..., '202512' AS DEC))。★必須涵蓋全年12個月★不可只做當前季度。年度合計: 加 CUBE(月份) → NVL(月份,'FY') 讓NULL代表FY合計。業績表中營業員歸屬: CASE WHEN ACC.EMP_NBR IS NULL THEN TXN.EMP_NBR ELSE ACC.EMP_NBR END"
   },
   {
     "name": "前N大客戶",
     "trigger_scenes": [],
-    "trigger_keywords": ["前N大", "前10大", "前5大", "排名前"],
+    "trigger_keywords": [
+      "前N大",
+      "前10大",
+      "前5大",
+      "排名前"
+    ],
     "rule": "前N大客戶: 用 ROW_NUMBER()/RANK() OVER (PARTITION BY 分組欄位 ORDER BY 指標 DESC) 排名後取 WHERE RK <= N。若要『每年分別取 Top N』，PARTITION BY 必須包含年度欄位(如TXN_YYYY)。若要『跨年合計 Top N』，則不含年度在 PARTITION BY 中。結果需 JOIN M_AC_ACCOUNT 帶出客戶姓名/營業員等"
   },
   {
     "name": "財管商品交易量分類",
-    "trigger_scenes": ["財管商品業績與例行月報"],
-    "trigger_keywords": ["財管商品交易量"],
+    "trigger_scenes": [
+      "財管商品業績與例行月報"
+    ],
+    "trigger_keywords": [
+      "財管商品交易量"
+    ],
     "rule": "若只需快速分類且不需商品篩選→可用 M_AC_ACCOUNT_PROD_TXN + CASE WHEN: SUM(CASE WHEN PROD_MTYPE_CODE='210' THEN TXN_AMT_TWD END) AS 海外股, SUM(CASE WHEN PROD_MTYPE_CODE='230' THEN TXN_AMT_TWD END) AS 海外債, SUM(CASE WHEN PROD_MTYPE_CODE IN ('120','220','420') THEN TXN_AMT_TWD END) AS 基金, SUM(CASE WHEN PROD_MTYPE_CODE='540' THEN TXN_AMT_TWD END) AS 境內結構型, SUM(CASE WHEN PROD_MTYPE_CODE='240' THEN TXN_AMT_TWD END) AS 境外結構型, SUM(CASE WHEN PROD_MTYPE_CODE='6L0' THEN TXN_AMT_TWD END) AS 壽險。注意: 綜合報表/業績表→改用各 M_AT_* 明細表"
   },
   {
     "name": "綜合客戶報表結構",
     "trigger_scenes": [],
-    "trigger_keywords": ["例行", "綜合", "客戶明細", "最新名單"],
+    "trigger_keywords": [
+      "例行",
+      "綜合",
+      "客戶明細",
+      "最新名單"
+    ],
     "rule": "綜合客戶報表(例行報表/客戶資料/最新名單)的標準結構: 1) BASE CTE: M_AC_ACCOUNT WHERE BRANCH_CODE+PROD_TYPE_CODE='100'+ACCT_VALID_FLAG='Y' + LEFT JOIN S_CHIAHSUANHSU.PARTY_NAME 2) 現貨交易: CTE FROM M_AT_STOCK_TXN(PROD_TYPE_CODE='100') GROUP BY ACCT_NBR, TXN_YYYYMM → PIVOT月欄位 3) 海外股: M_AT_STOCK_TXN(PROD_TYPE_CODE='200') 4) 基金: M_AT_FUND_TXN(BUY_SELL_CODE='001') 5) 海外債: M_AT_BOND_TXN 6) 結構型: M_AT_SN_TXN(BUY_SELL_CODE='001') 7) 壽險: M_AT_INSURANCE_TXN(POLICY_STATUS_CODE IN ('0','1')) 8) 庫存: M_AC_ACCOUNT_INVENTORY(最新SNAP_YYYYMM) 9) 貢獻度: M_AC_ACCOUNT_REVENUE 10) 客群標籤: S_ARIELSHAO.CUSTOMER_GROUP_2026Q1(經紀) + S_MELODYJJJIAN.CUSTOMER_GROUP_2026(財管) 11) 最終: SELECT BASE.*, LEFT JOIN 各CTE。⚠️ '客戶資料/客戶明細/最新名單/例行性報表' 通常指多維度綜合績效報表，絕非簡單客戶名冊"
   },
   {
     "name": "財管客群資料數據",
     "trigger_scenes": [],
-    "trigger_keywords": ["財管客群", "財管庫存", "財管損益"],
+    "trigger_keywords": [
+      "財管客群",
+      "財管庫存",
+      "財管損益"
+    ],
     "rule": "財管客群客戶資料/數據/庫存/損益: 以 PARTY_ID 為彙總粒度。BASE: M_AC_ACCOUNT WHERE BRANCH_NAME+NW_SEGMENT_DESC+ACCT_VALID_FLAG='Y' LEFT JOIN S_CHIAHSUANHSU.PARTY_NAME。客戶屬性: M_PT_CUSTOMER(AGE/KYC_RISK_DESC)。★財管庫存+損益★: M_AC_ACCOUNT_INVENTORY(最新SNAP_YYYYMM) GROUP BY PARTY_ID，按PROD_MTYPE_CODE分類: '210'海外股/'230'海外債/'120,220,420'基金/'240,540'結構型/'6L0'壽險，各取BAL_AMT_TWD+BENEFIT_AMT_TWD。★各商品成交金額(必須)★: 各 M_AT_* 明細表各建獨立CTE，最終以 LEFT JOIN 合併確保母體完整"
+  },
+  {
+    "name": "有無交易判斷",
+    "trigger_scenes": [],
+    "trigger_keywords": [
+      "沒交易",
+      "未交易",
+      "有交易",
+      "實動",
+      "未實動",
+      "靜止",
+      "無交易",
+      "不曾交易",
+      "交易紀錄",
+      "是否有交易",
+      "有無交易"
+    ],
+    "rule": "有無交易判斷：判斷客戶「是否有交易」或「是否沒有交易」時，禁止使用 SUM(NET_AMT_TWD) 作為有無交易的依據，因為買入與賣出的淨收付金額可能相互抵消，導致 SUM=0 誤判為無交易。\n正確做法：\n  - 判斷「有無交易」→ 使用 COUNT(txn_date) > 0 或 SUM(ABS(TXN_AMT_TWD)) > 0\n  - 判斷「沒有交易」→ 使用 COUNT(txn_date) = 0 或 SUM(ABS(TXN_AMT_TWD)) = 0（需搭配 NVL 或 LEFT JOIN）\n  - 計算「實際交易量/業績」→ 使用 TXN_AMT_TWD（成交金額，未扣費用）\n  - 計算「實際資金流出入」→ 使用 NET_AMT_TWD（淨收付金額，已扣費用）\nNET_AMT_TWD 只適合計算損益或資金流，不適合當交易有無的判斷欄位。"
   }
 ]
