@@ -21,6 +21,8 @@ def _chat(model: str, messages: list[dict], **kwargs) -> object:
                or model.startswith("gpt-5"))
     if no_temp:
         kwargs.pop("temperature", None)
+    if model.startswith("gpt-5") and "reasoning_effort" not in kwargs:
+        kwargs["reasoning_effort"] = "medium"
     return openai_client.chat.completions.create(model=model, messages=messages, **kwargs)
 
 SCHEMA_PATH: Path = BASE_DIR / "schema.csv"
