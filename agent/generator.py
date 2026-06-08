@@ -29,6 +29,7 @@ SCHEMA_PATH: Path = BASE_DIR / "schema.csv"
 RELATIONSHIPS_PATH: Path = BASE_DIR / "relationships.json"
 METRICS_PATH: Path = BASE_DIR / "metrics.json"
 BUSINESS_SKILLS_PATH: Path = BASE_DIR / "business_skills.json"
+PRODUCT_SKILLS_PATH: Path = BASE_DIR / "product_skills.json"
 CODE_MAPPING_PATH: Path = BASE_DIR / "code_mapping.json"
 
 _col_codes: dict | None = None  # { COLUMN_NAME_UPPER: {code: desc} }
@@ -178,6 +179,19 @@ def _format_skills_text(triggered: list[dict]) -> str:
 def _load_business_skills_text(query: str, scene: str = "") -> str:
     """依場景名稱或關鍵字觸發 business_skills.json 規則，組成 prompt 文字。"""
     return _format_skills_text(_select_skills(query, scene))
+
+
+def _select_product_skills(detected_products: list[str]) -> list[dict]:
+    """用實體擷取的商品名稱 exact-match 觸發 product_skills.json。"""
+    if not detected_products or not PRODUCT_SKILLS_PATH.exists():
+        return []
+    with open(PRODUCT_SKILLS_PATH, encoding="utf-8") as f:
+        skills: list[dict] = json.load(f)
+    product_set = {p.lower() for p in detected_products}
+    return [
+        s for s in skills
+        if any(tp.lower() in product_set for tp in s.get("trigger_products", []))
+    ]
 
 
 # ── Relationships 載入 ─────────────────────────────────────────────
@@ -522,12 +536,15 @@ def generate(
     metrics_union = metrics_orig + metrics_new
     metrics_text = _format_metrics_text(metrics_union)
 
-    # ── Skills union：原始需求 ∪ extra_context ─────────────────────
+    # ── Skills union：原始需求 ∪ extra_context ∪ product skills ──
     skills_orig = _select_skills(requirement, scene)
     skills_extra = _select_skills(extra_context, scene) if extra_context else []
     seen_s = {s["name"] for s in skills_orig}
     skills_new_list = [s for s in skills_extra if s["name"] not in seen_s]
-    skills_union = skills_orig + skills_new_list
+    # product_skills：用 detected_products exact-match，比 keyword routing 更精準
+    product_skill_list = [s for s in _select_product_skills(extraction.detected_products)
+                          if s["name"] not in seen_s and s["name"] not in {x["name"] for x in skills_new_list}]
+    skills_union = skills_orig + skills_new_list + product_skill_list
     skills_text = _format_skills_text(skills_union)
 
     step_a_schema = _load_schema_for_tables(candidate_tables)
@@ -543,8 +560,9 @@ def generate(
     print(f"  注入 metrics：{len(metrics_union)}/{_m_total} 條（{_m_mode}）"
           + (f"，其中 {len(metrics_new)} 條來自最終確認" if metrics_new else ""))
     if skills_union:
-        print(f"  注入 business_skills：{len(skills_union)} 條"
-              + (f"，其中 {len(skills_new_list)} 條來自最終確認" if skills_new_list else ""))
+        print(f"  注入 skills：{len(skills_union)} 條"
+              + (f"，其中 {len(skills_new_list)} 條來自最終確認" if skills_new_list else "")
+              + (f"，{len(product_skill_list)} 條來自商品路由" if product_skill_list else ""))
 
     from datetime import date as _date
     today = _date.today().strftime("%Y/%m/%d")

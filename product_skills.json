@@ -1,12 +1,22 @@
 [
   {
     "name": "複委託海外股",
-    "trigger_products": ["複委託海外股"],
-    "rule": "海外股票查詢: 主表 M_AT_STOCK_TXN, WHERE PROD_TYPE_CODE='200' AND PROD_MTYPE_CODE='210'。美股加 COUNTRY_CODE='USA'。ETF 用 M_AT_STOCK_TXN WHERE PROD_STYPE_CODE='019'"
+    "trigger_products": [
+      "複委託海外股",
+      "海外股",
+      "美股",
+      "美股ETF",
+      "海外ETF"
+    ],
+    "rule": "複委託海外股查詢：主表 M_AT_STOCK_TXN，WHERE PROD_TYPE_CODE='200' AND PROD_MTYPE_CODE='210'。\n★ 美股 vs 美股ETF 必須明確區分，不可混用：\n  - 美股（非ETF）：加 COUNTRY_CODE='USA' AND (PROD_STYPE_CODE <> '019' OR PROD_STYPE_CODE IS NULL)\n  - 美股ETF：加 COUNTRY_CODE='USA' AND PROD_STYPE_CODE='019'\n  - 需求說「美股」但未指明是否含ETF → 同時輸出兩者，以 PROD_STYPE_CODE 區分欄位\n  - 需求只說「海外股」未指定國家 → 不加 COUNTRY_CODE 篩選\n  - 需求只說「海外ETF」 → 加 PROD_STYPE_CODE='019'，不加 COUNTRY_CODE\nPROD_STYPE_CODE='019' 代表股票型ETF，需搭配 COUNTRY_CODE 才能鎖定特定國家ETF。"
   },
   {
     "name": "定期定額",
-    "trigger_products": ["定期定額"],
-    "rule": "定期定額查詢: WHERE TXN_TYPE_CODE='102'。常見於基金(M_AT_FUND_TXN)或股票(M_AT_STOCK_TXN)"
+    "trigger_products": [
+      "定期定額",
+      "定額扣款",
+      "自動投資"
+    ],
+    "rule": "定期定額查詢：WHERE TXN_TYPE_CODE='102'。\n常見商品：基金定期定額用 M_AT_FUND_TXN；海外股定期定額用 M_AT_STOCK_TXN。\n若需求同時要區分商品類型（如股票 vs ETF），搭配 PROD_STYPE_CODE 判斷（'019'=ETF，其餘=股票）。"
   }
 ]
