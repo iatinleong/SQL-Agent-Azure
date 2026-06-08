@@ -208,10 +208,11 @@ class BlockRegistry:
                 if k.replace("cte:", "").upper() == cte_n:
                     return k
 
-        # Hallucination / schema prefix: match any real table name mentioned in error
+        # Hallucination / schema prefix: match any real table name mentioned in error.
+        # Use word-boundary regex to avoid M_AC_ACCOUNT matching M_AC_ACCOUNT_INFO.
         for block in self._ordered:
             for tname in block.real_tables:
-                if tname in err_up:
+                if re.search(r'\b' + re.escape(tname) + r'\b', err_up):
                     return block.name
 
         # Hallucination column fallback: "欄位不存在於查詢中任何表格：COL_NAME"
