@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from .config import PROFILE_MODEL
+from .config import PROFILE_MODEL, PROFILE_REASONING_EFFORT
 from .supabase_logger import get_client
 
 _TABLE = "user_profiles"
@@ -108,6 +108,7 @@ def update_profile(
                 {"role": "user", "content": prompt},
             ],
             temperature=0,
+            reasoning_effort=PROFILE_REASONING_EFFORT,
         )
         raw = (resp.choices[0].message.content or "").strip()
         new_rules = _parse(raw)

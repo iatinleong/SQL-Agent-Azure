@@ -8,7 +8,7 @@ from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import AzureOpenAI
 
 # ── stdout UTF-8（Windows cp950 終端）────────────────────────────────────────
 if hasattr(sys.stdout, "reconfigure"):
@@ -24,13 +24,23 @@ ALL_CASES_PATH: Path = BASE_DIR / "all_cases.json"
 TAXONOMY_PATH: Path = BASE_DIR / "taxonomy.json"
 
 # ── 模型 ─────────────────────────────────────────────────────────────────────
-CLASSIFICATION_MODEL: str = "gpt-5-mini"  # batch/CLI 工具用（classifier, summarizer 等）
-GENERATION_MODEL: str = "o3"
-PLAN_MODEL: str = "gpt-5.1"       # report_planner：報表需求確認
-VALIDATOR_MODEL: str = "gpt-5.4-mini"  # sql_validator：SQL 錯誤修正
-GUARDRAIL_MODEL: str = "gpt-5-mini"  # guardrail：安全過濾
-REFINER_MODEL: str = "gpt-5.4-mini"    # refiner：追問意圖分類
-PROFILE_MODEL: str = "gpt-5-mini"    # user_profile：個人化摘要
+CLASSIFICATION_MODEL: str = "gpt-5.2"
+GENERATION_MODEL: str = "gpt-5.2"
+PLAN_MODEL: str = "gpt-5.2"
+VALIDATOR_MODEL: str = "gpt-5.2"
+GUARDRAIL_MODEL: str = "gpt-5.2"
+REFINER_MODEL: str = "gpt-5.2"
+PROFILE_MODEL: str = "gpt-5.2"
+
+# ── Reasoning effort（各角色依複雜度設定）────────────────────────────────────
+GENERATION_REASONING_EFFORT: str = "high"       # SQL 生成：最複雜
+PLAN_REASONING_EFFORT: str = "high"             # 報表規劃
+VALIDATOR_REASONING_EFFORT: str = "medium"      # SQL 修正
+REFINER_CLASSIFY_REASONING_EFFORT: str = "low"  # 追問意圖分類
+REFINER_REFINE_REASONING_EFFORT: str = "medium" # SQL 改寫
+CLASSIFICATION_REASONING_EFFORT: str = "low"    # 場景分類
+GUARDRAIL_REASONING_EFFORT: str = "low"         # 安全過濾
+PROFILE_REASONING_EFFORT: str = "low"           # 個人化摘要
 
 # ── 模型費率（每百萬 token，USD）────────────────────────────────────────────
 MODEL_PRICING: dict[str, tuple[float, float]] = {
@@ -72,5 +82,10 @@ _bge_local = os.getenv(
 )
 BGE_MODEL_PATH: str = _bge_local if Path(_bge_local).exists() else "BAAI/bge-m3"
 
-# ── OpenAI client（公司 SSL inspection → verify=False）───────────────────────
-openai_client = OpenAI(http_client=httpx.Client(verify=False))
+# ── Azure OpenAI client ───────────────────────────────────────────────────────
+openai_client = AzureOpenAI(
+    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT", "https://aoai-stw-jpe-prd-aisales-01-az.openai.azure.com/"),
+    api_key=os.getenv("AZURE_OPENAI_KEY", ""),
+    api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-01-preview"),
+    http_client=httpx.Client(verify=False),
+)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-from .config import PLAN_MODEL
+from .config import PLAN_MODEL, PLAN_REASONING_EFFORT
 from .generator import _chat
 
 
@@ -124,6 +124,7 @@ def plan_report(
             {"role": "user", "content": prompt},
         ],
         temperature=0,
+        reasoning_effort=PLAN_REASONING_EFFORT,
     )
     raw = (resp.choices[0].message.content or "").strip()
     for fence in ("```json", "```"):

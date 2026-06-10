@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Union
 
-from .config import CLASSIFICATION_MODEL, openai_client
+from .config import CLASSIFICATION_MODEL, CLASSIFICATION_REASONING_EFFORT, openai_client
 from .models import ClassificationResult
 from .reader import normalize_requirement
 from .taxonomy import build_taxonomy_section, get_category_names, load_taxonomy
@@ -32,6 +32,7 @@ def classify_intent(requirement: Union[str, dict]) -> tuple[ClassificationResult
             {"role": "user", "content": user_prompt},
         ],
         response_format=ClassificationResult,
+        reasoning_effort=CLASSIFICATION_REASONING_EFFORT,
     )
     tokens = {
         "classify_in": response.usage.prompt_tokens,

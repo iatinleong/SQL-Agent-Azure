@@ -7,7 +7,7 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
-from .config import BASE_DIR, CLASSIFICATION_MODEL, openai_client
+from .config import BASE_DIR, CLASSIFICATION_MODEL, CLASSIFICATION_REASONING_EFFORT, openai_client
 
 SCHEMA_CSV: Path = BASE_DIR / "schema.csv"
 TABLE_SUMMARIES_DIR: Path = BASE_DIR / "table_summaries"
@@ -86,6 +86,7 @@ def summarize_table(table_name: str, table_cn: str, columns: list[dict]) -> str:
             {"role": "user", "content": _build_user_prompt(table_name, table_cn, columns)},
         ],
         max_completion_tokens=8000,
+        reasoning_effort=CLASSIFICATION_REASONING_EFFORT,
     )
     return response.choices[0].message.content.strip()
 

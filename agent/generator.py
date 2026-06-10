@@ -7,14 +7,14 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config import BASE_DIR, GENERATION_MODEL, get_model_pricing, openai_client
+from .config import BASE_DIR, GENERATION_MODEL, GENERATION_REASONING_EFFORT, get_model_pricing, openai_client
 from .retriever import RetrievalHit
 
 _REASONING_MODELS = {"o1", "o1-mini", "o3", "o3-mini", "o4-mini"}
 
 
 def _chat(model: str, messages: list[dict], **kwargs) -> object:
-    """統一呼叫入口：不支援自訂 temperature 的 model 自動移除該參數。"""
+    """統一呼叫入口：移除 gpt-5.x 不支援的 temperature；未指定 reasoning_effort 時預設 medium。"""
     base = model.split("-")[0] if "-" in model else model
     no_temp = (model in _REASONING_MODELS
                or base in _REASONING_MODELS
@@ -417,6 +417,7 @@ def _step_a(
             {"role": "user", "content": user_prompt},
         ],
         temperature=0,
+        reasoning_effort=GENERATION_REASONING_EFFORT,
     )
     raw = resp.choices[0].message.content or ""
     in_tok = resp.usage.prompt_tokens

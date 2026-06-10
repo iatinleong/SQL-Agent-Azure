@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from .config import GUARDRAIL_MODEL
+from .config import GUARDRAIL_MODEL, GUARDRAIL_REASONING_EFFORT
 from .generator import _chat
 
 _SYSTEM = """\
@@ -43,6 +43,7 @@ def check_input(text: str, model: str = GUARDRAIL_MODEL) -> tuple[bool, str, dic
             {"role": "user", "content": text},
         ],
         temperature=0,
+        reasoning_effort=GUARDRAIL_REASONING_EFFORT,
     )
     raw = (resp.choices[0].message.content or "").strip().strip("```json").strip("```").strip()
     tokens = {

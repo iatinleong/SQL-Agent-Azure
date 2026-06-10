@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-from .config import REFINER_MODEL, GENERATION_MODEL, get_model_pricing
+from .config import REFINER_MODEL, GENERATION_MODEL, REFINER_CLASSIFY_REASONING_EFFORT, REFINER_REFINE_REASONING_EFFORT, get_model_pricing
 from .generator import _chat, _load_schema_for_tables
 
 INTENTS = ("ADD_TABLE", "REMOVE_TABLE", "MODIFY_SQL", "NEW_QUERY")
@@ -91,6 +91,7 @@ def classify_followup(
             {"role": "user", "content": prompt},
         ],
         temperature=0,
+        reasoning_effort=REFINER_CLASSIFY_REASONING_EFFORT,
     )
     raw = (resp.choices[0].message.content or "").strip().strip("```json").strip("```").strip()
     tokens = {
@@ -168,6 +169,7 @@ def refine(
             {"role": "user", "content": user_prompt},
         ],
         temperature=0,
+        reasoning_effort=REFINER_REFINE_REASONING_EFFORT,
     )
     raw = resp.choices[0].message.content or ""
     refine_tokens = {

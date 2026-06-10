@@ -7,7 +7,7 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from .config import VALIDATOR_MODEL
+from .config import VALIDATOR_MODEL, VALIDATOR_REASONING_EFFORT
 
 _SCHEMA_PATH = Path(__file__).parent.parent / "schema.csv"
 _DM_S_VIEW = "DM_S_VIEW."
@@ -961,6 +961,7 @@ def _llm_review(
             },
         ],
         temperature=0,
+        reasoning_effort=VALIDATOR_REASONING_EFFORT,
     )
 
     tokens = {
@@ -1077,6 +1078,7 @@ def _rewrite_block(
             {"role": "user", "content": "\n\n".join(parts)},
         ],
         temperature=0,
+        reasoning_effort=VALIDATOR_REASONING_EFFORT,
     )
     fixed = (resp.choices[0].message.content or "").strip()
     for fence in ("```sql", "```"):
@@ -1140,6 +1142,7 @@ def _fix_with_llm(sql: str, errors: list[str], model: str, schema_hint: str = ""
             },
         ],
         temperature=0,
+        reasoning_effort=VALIDATOR_REASONING_EFFORT,
     )
     fixed = (resp.choices[0].message.content or "").strip()
     for fence in ("```sql", "```"):

@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .config import ALL_CASES_PATH, BASE_DIR, CLASSIFICATION_MODEL, openai_client
+from .config import ALL_CASES_PATH, BASE_DIR, CLASSIFICATION_MODEL, CLASSIFICATION_REASONING_EFFORT, openai_client
 
 SUMMARIES_DIR: Path = BASE_DIR / "case_summaries"
 
@@ -92,6 +92,7 @@ def summarize_case(case: dict) -> str:
             {"role": "user", "content": _build_user_prompt(case)},
         ],
         max_completion_tokens=8000,
+        reasoning_effort=CLASSIFICATION_REASONING_EFFORT,
     )
     return response.choices[0].message.content.strip()
 
