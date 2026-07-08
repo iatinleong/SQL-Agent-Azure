@@ -8,7 +8,7 @@ from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
-from openai import AzureOpenAI
+from openai import OpenAI
 
 # ── stdout UTF-8（Windows cp950 終端）────────────────────────────────────────
 if hasattr(sys.stdout, "reconfigure"):
@@ -82,10 +82,8 @@ _bge_local = os.getenv(
 )
 BGE_MODEL_PATH: str = _bge_local if Path(_bge_local).exists() else "BAAI/bge-m3"
 
-# ── Azure OpenAI client ───────────────────────────────────────────────────────
-openai_client = AzureOpenAI(
-    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT", "https://aoai-stw-jpe-prd-aisales-01-az.openai.azure.com/"),
-    api_key=os.getenv("AZURE_OPENAI_KEY", ""),
-    api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-01-preview"),
+# ── OpenAI client ─────────────────────────────────────────────────────────────
+openai_client = OpenAI(
+    api_key=os.getenv("OPENAI_API_KEY", ""),
     http_client=httpx.Client(verify=False),
 )
