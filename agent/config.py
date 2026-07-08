@@ -104,8 +104,23 @@ def resolve_openai_api_key() -> str:
     return ""
 
 
-# ── OpenAI client ─────────────────────────────────────────────────────────────
-openai_client = OpenAI(
-    api_key=resolve_openai_api_key() or None,
-    http_client=httpx.Client(verify=False),
-)
+# ── OpenAI client（延遲初始化，避免 import config 時在 Cloud 失敗）────────────
+_openai_client: OpenAI | None = None
+
+
+def get_openai_client() -> OpenAI:
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = OpenAI(
+            api_key=resolve_openai_api_key() or None,
+            http_client=httpx.Client(verify=False),
+        )
+    return _openai_client
+
+
+class _LazyOpenAIClient:
+    def __getattr__(self, name: str):
+        return getattr(get_openai_client(), name)
+
+
+openai_client = _LazyOpenAIClient()

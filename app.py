@@ -20,6 +20,21 @@ def _sync_streamlit_secrets() -> None:
             os.environ[_k] = str(st.secrets[_k]).strip().strip('"').strip("'")
 
 
+def _get_openai_api_key() -> str:
+    key = (os.getenv("OPENAI_API_KEY") or "").strip().strip('"').strip("'")
+    if key:
+        return key
+    try:
+        if hasattr(st, "secrets") and "OPENAI_API_KEY" in st.secrets:
+            key = str(st.secrets["OPENAI_API_KEY"]).strip().strip('"').strip("'")
+            if key:
+                os.environ.setdefault("OPENAI_API_KEY", key)
+                return key
+    except Exception:
+        pass
+    return ""
+
+
 _sync_streamlit_secrets()
 
 st.set_page_config(
@@ -1202,9 +1217,7 @@ def main():
     if not _login_gate():
         return
 
-    from agent.config import resolve_openai_api_key
-
-    if not resolve_openai_api_key():
+    if not _get_openai_api_key():
         st.error(
             "未設定 **OPENAI_API_KEY**。\n\n"
             "请到 Streamlit Cloud → **Settings → Secrets** 加入：\n\n"
