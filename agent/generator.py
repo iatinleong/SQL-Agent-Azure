@@ -7,7 +7,14 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config import BASE_DIR, GENERATION_MODEL, GENERATION_REASONING_EFFORT, get_model_pricing, openai_client
+from .config import (
+    BASE_DIR,
+    GENERATION_MODEL,
+    GENERATION_REASONING_EFFORT,
+    get_model_pricing,
+    openai_client,
+    resolve_openai_api_key,
+)
 from .retriever import RetrievalHit
 
 _REASONING_MODELS = {"o1", "o1-mini", "o3", "o3-mini", "o4-mini"}
@@ -15,6 +22,10 @@ _REASONING_MODELS = {"o1", "o1-mini", "o3", "o3-mini", "o4-mini"}
 
 def _chat(model: str, messages: list[dict], **kwargs) -> object:
     """統一呼叫入口：移除 gpt-5.x 不支援的 temperature；未指定 reasoning_effort 時預設 medium。"""
+    if not resolve_openai_api_key():
+        raise RuntimeError(
+            "OPENAI_API_KEY 未設定。请在 Streamlit Cloud Secrets 或 .env 加入 OPENAI_API_KEY。"
+        )
     base = model.split("-")[0] if "-" in model else model
     no_temp = (model in _REASONING_MODELS
                or base in _REASONING_MODELS

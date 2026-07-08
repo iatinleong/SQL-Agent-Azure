@@ -14,9 +14,13 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 # ── 將 Streamlit Secrets 同步到 os.environ（讓 agent 模組能用 os.getenv 讀取）
-for _k in ("OPENAI_API_KEY", "SUPABASE_URL", "SUPABASE_KEY"):
-    if _k not in os.environ and hasattr(st, "secrets") and _k in st.secrets:
-        os.environ[_k] = st.secrets[_k]
+def _sync_streamlit_secrets() -> None:
+    for _k in ("OPENAI_API_KEY", "SUPABASE_URL", "SUPABASE_KEY"):
+        if _k not in os.environ and hasattr(st, "secrets") and _k in st.secrets:
+            os.environ[_k] = str(st.secrets[_k]).strip().strip('"').strip("'")
+
+
+_sync_streamlit_secrets()
 
 st.set_page_config(
     page_title="SQL Agent",
@@ -1197,6 +1201,18 @@ def main():
 
     if not _login_gate():
         return
+
+    from agent.config import resolve_openai_api_key
+
+    if not resolve_openai_api_key():
+        st.error(
+            "未設定 **OPENAI_API_KEY**。\n\n"
+            "请到 Streamlit Cloud → **Settings → Secrets** 加入：\n\n"
+            "```toml\nOPENAI_API_KEY = \"sk-proj-...\"\n```\n\n"
+            "保存后点击 **Reboot app**。注意变量名必须是 `OPENAI_API_KEY`，"
+            "不是旧的 `AZURE_OPENAI_KEY`。"
+        )
+        st.stop()
 
     user = st.session_state.current_user or {}
     _render_sidebar(user)

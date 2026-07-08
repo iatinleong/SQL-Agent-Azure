@@ -82,8 +82,30 @@ _bge_local = os.getenv(
 )
 BGE_MODEL_PATH: str = _bge_local if Path(_bge_local).exists() else "BAAI/bge-m3"
 
+
+def _from_streamlit_secrets(name: str) -> str:
+    try:
+        import streamlit as st
+
+        if hasattr(st, "secrets") and name in st.secrets:
+            return str(st.secrets[name])
+    except Exception:
+        pass
+    return ""
+
+
+def resolve_openai_api_key() -> str:
+    """從環境變數或 Streamlit Secrets 取得 API key（Cloud 部署用）。"""
+    for raw in (os.getenv("OPENAI_API_KEY", ""), _from_streamlit_secrets("OPENAI_API_KEY")):
+        key = str(raw).strip().strip('"').strip("'")
+        if key:
+            os.environ.setdefault("OPENAI_API_KEY", key)
+            return key
+    return ""
+
+
 # ── OpenAI client ─────────────────────────────────────────────────────────────
 openai_client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY", ""),
+    api_key=resolve_openai_api_key() or None,
     http_client=httpx.Client(verify=False),
 )
